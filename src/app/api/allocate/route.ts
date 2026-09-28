@@ -1,10 +1,10 @@
 // POST /api/allocate
 // Body: { stocks: ScreenedStock[], totalInvestment: number }
-// Returns: AllocationStock[] with weight, rupees, shares
+// Returns: { allocation, removedStocks, totalInvested, totalAllocated, cashLeftover, sectorBreakdown }
 
 import { NextResponse } from "next/server";
 import { computeAllocation } from "@/lib/strategy";
-import { ScreenedStock } from "@/lib/indicators";
+import { ScreenedStock, AllocationStock } from "@/lib/indicators";
 
 export const runtime = "nodejs";
 
@@ -18,9 +18,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "stocks[] is required" }, { status: 400 });
     }
 
-    const allocation = computeAllocation(stocks, totalInvestment);
+    const { allocation, removedStocks } = computeAllocation(stocks, totalInvestment);
     return NextResponse.json({
       allocation,
+      removedStocks,
       totalInvested: totalInvestment,
       totalAllocated: allocation.reduce((a, b) => a + b.rupees, 0),
       cashLeftover: totalInvestment - allocation.reduce((a, b) => a + b.shares * b.currentPrice, 0),
@@ -34,7 +35,7 @@ export async function POST(req: Request) {
   }
 }
 
-function computeSectorBreakdown(alloc: ReturnType<typeof computeAllocation>) {
+function computeSectorBreakdown(alloc: AllocationStock[]) {
   const m = new Map<string, { weight: number; count: number; rupees: number }>();
   for (const s of alloc) {
     const cur = m.get(s.sector) || { weight: 0, count: 0, rupees: 0 };

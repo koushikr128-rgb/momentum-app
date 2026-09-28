@@ -46,64 +46,128 @@ export function applyMarketCapFilter(m: StockMetrics, marketCapCr: number): bool
 /**
  * Allocation engine — inverse vol × RSI penalty, with position & sector caps.
  */
+export interface RemovedStock {
+  symbol: string;
+  sector: string;
+  currentPrice: number;
+  attemptedRupees: number;  // rupees that were tentatively allocated before removal
+  attemptedWeight: number;
+  reason: string;
+}
+
+export interface AllocationResult {
+  allocation: AllocationStock[];
+  removedStocks: RemovedStock[];
+}
+
+/**
+ * Allocation engine — inverse-vol × RSI penalty, with position & sector caps,
+ * floor, AND a real-world affordability filter:
+ *   If a stock's allocated rupees < its current price (can't buy even 1 share),
+ *   remove it from the book and redistribute its weight to the remaining stocks.
+ *   Repeat iteratively until all remaining stocks are affordable.
+ *
+ * Example: Top 30 + ₹4L → Page Industries at ₹37,000 gets 4% = ₹16,667.
+ * ₹16,667 < ₹37,000, so Page Industries is removed and its 4% is redistributed.
+ */
 export function computeAllocation(
   stocks: ScreenedStock[],
   totalInvestment: number,
   posCap = 0.15,
   sectorCap = 0.25,
   floor = 0.05
-): AllocationStock[] {
-  if (stocks.length === 0) return [];
-  const d = stocks.map((s) => ({
-    ...s,
-    baseW: 1 / (s.annVolPct || 30),
-    rsiMult: rsiMultiplier(s.rsi14),
-  }));
-  const adjSum = d.reduce((acc, s) => acc + s.baseW * s.rsiMult, 0);
-  let w = d.map((s) => (s.baseW * s.rsiMult) / adjSum);
+): AllocationResult {
+  if (stocks.length === 0) return { allocation: [], removedStocks: [] };
 
-  // Iterative cap-and-renormalize
-  for (let iter = 0; iter < 20; iter++) {
-    // floor
-    w = w.map((v) => Math.max(v, floor));
-    // position cap
-    w = w.map((v) => Math.min(v, posCap));
-    // sector cap
-    const sectorSums = new Map<string, number>();
+  const removedStocks: RemovedStock[] = [];
+  let workingSet = stocks.slice();
+
+  // Iterate: compute weights, remove unaffordable stocks, redistribute.
+  // Limit to stocks.length iterations to prevent infinite loop.
+  for (let pass = 0; pass < stocks.length; pass++) {
+    if (workingSet.length === 0) break;
+
+    const d = workingSet.map((s) => ({
+      ...s,
+      baseW: 1 / (s.annVolPct || 30),
+      rsiMult: rsiMultiplier(s.rsi14),
+    }));
+    const adjSum = d.reduce((acc, s) => acc + s.baseW * s.rsiMult, 0);
+    let w = d.map((s) => (s.baseW * s.rsiMult) / adjSum);
+
+    // Iterative cap-and-renormalize (floor, posCap, sectorCap)
+    for (let iter = 0; iter < 20; iter++) {
+      w = w.map((v) => Math.max(v, floor));
+      w = w.map((v) => Math.min(v, posCap));
+      const sectorSums = new Map<string, number>();
+      d.forEach((s, i) => {
+        sectorSums.set(s.sector, (sectorSums.get(s.sector) || 0) + w[i]);
+      });
+      d.forEach((s, i) => {
+        const ss = sectorSums.get(s.sector)!;
+        if (ss > sectorCap) {
+          w[i] = (w[i] * sectorCap) / ss;
+        }
+      });
+      const sum = w.reduce((a, b) => a + b, 0);
+      w = w.map((v) => v / sum);
+    }
+
+    // Affordability check: remove stocks where rupees < currentPrice (can't buy 1 share)
+    const toRemove: number[] = [];
     d.forEach((s, i) => {
-      sectorSums.set(s.sector, (sectorSums.get(s.sector) || 0) + w[i]);
-    });
-    d.forEach((s, i) => {
-      const ss = sectorSums.get(s.sector)!;
-      if (ss > sectorCap) {
-        w[i] = (w[i] * sectorCap) / ss;
+      const rupees = w[i] * totalInvestment;
+      // Use a small buffer (1.05x) so rounding to whole shares doesn't leave 0 shares
+      if (rupees < s.currentPrice * 1.05) {
+        toRemove.push(i);
       }
     });
-    // renormalize
-    const sum = w.reduce((a, b) => a + b, 0);
-    w = w.map((v) => v / sum);
+
+    if (toRemove.length === 0) {
+      // All stocks affordable — build final allocation
+      const allocation = d
+        .map((s, i) => {
+          const weight = w[i];
+          const rupees = weight * totalInvestment;
+          const shares = Math.max(1, Math.round(rupees / s.currentPrice));
+          const notes: string[] = [];
+          if (s.rsi14 > 80) notes.push("RSI>80 halved");
+          else if (s.rsi14 > 70) notes.push("RSI>70 −25%");
+          if (s.annVolPct > 60) notes.push("High vol");
+          if (weight >= posCap - 0.005) notes.push(`capped@${(posCap * 100).toFixed(0)}%`);
+          return {
+            ...s,
+            weight,
+            rupees,
+            shares,
+            rsiMultiplier: s.rsiMult,
+            notes: notes.join(", "),
+          };
+        })
+        .sort((a, b) => b.weight - a.weight);
+      return { allocation, removedStocks };
+    }
+
+    // Remove unaffordable stocks, record them, and re-iterate with smaller set
+    toRemove
+      .sort((a, b) => b - a) // descending so splice doesn't shift indices
+      .forEach((i) => {
+        const s = d[i];
+        const rupees = w[i] * totalInvestment;
+        removedStocks.push({
+          symbol: s.symbol,
+          sector: s.sector,
+          currentPrice: s.currentPrice,
+          attemptedRupees: rupees,
+          attemptedWeight: w[i],
+          reason: `Price ₹${s.currentPrice.toFixed(0)} > allocation ₹${rupees.toFixed(0)} (can't buy 1 share)`,
+        });
+        workingSet = workingSet.filter((x) => x.symbol !== s.symbol);
+      });
   }
 
-  return d
-    .map((s, i) => {
-      const weight = w[i];
-      const rupees = weight * totalInvestment;
-      const shares = Math.round(rupees / s.currentPrice);
-      const notes: string[] = [];
-      if (s.rsi14 > 80) notes.push("RSI>80 halved");
-      else if (s.rsi14 > 70) notes.push("RSI>70 −25%");
-      if (s.annVolPct > 60) notes.push("High vol");
-      if (weight >= posCap - 0.005) notes.push("capped@15%");
-      return {
-        ...s,
-        weight,
-        rupees,
-        shares,
-        rsiMultiplier: s.rsiMult,
-        notes: notes.join(", "),
-      };
-    })
-    .sort((a, b) => b.weight - a.weight);
+  // Fallback (shouldn't reach here normally)
+  return { allocation: [], removedStocks };
 }
 
 function rsiMultiplier(rsi: number): number {

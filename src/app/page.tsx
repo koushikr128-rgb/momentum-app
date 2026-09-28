@@ -36,8 +36,18 @@ type ScreenResponse = {
   error?: string;
 };
 
+type RemovedStock = {
+  symbol: string;
+  sector: string;
+  currentPrice: number;
+  attemptedRupees: number;
+  attemptedWeight: number;
+  reason: string;
+};
+
 type AllocateResponse = {
   allocation: AllocationStock[];
+  removedStocks: RemovedStock[];
   totalInvested: number;
   totalAllocated: number;
   cashLeftover: number;
@@ -1039,11 +1049,48 @@ function AllocationPanel({
             <StatCard icon={<Gauge className="w-4 h-4" />} label="Weighted vol" value={`${fmt(alloc.allocation.reduce((a, s) => a + s.weight * s.annVolPct, 0))}%`} sub="annualized" tone="amber" />
           </div>
 
+          {/* Removed stocks banner — stocks that couldn't be afforded with allocated rupees */}
+          {alloc.removedStocks.length > 0 && (
+            <Card className="card-pastel border-amber-300/60 bg-amber-50/40">
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-amber-900">
+                      {alloc.removedStocks.length} stock{alloc.removedStocks.length > 1 ? "s" : ""} removed — price exceeded allocation
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1 mb-3">
+                      These stocks were too expensive to buy even 1 share with their allocated rupees.
+                      Their weight has been redistributed to the remaining {alloc.allocation.length} stocks.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {alloc.removedStocks.map((s) => (
+                        <span
+                          key={s.symbol}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-200"
+                          title={s.reason}
+                        >
+                          {s.symbol}
+                          <span className="opacity-70">₹{s.currentPrice.toFixed(0)}</span>
+                          <span className="opacity-50">→</span>
+                          <span className="opacity-70">₹{s.attemptedRupees.toFixed(0)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Allocation table */}
           <Card className="card-pastel">
             <CardHeader>
               <CardTitle>Allocation Breakdown — {fmtINR(alloc.totalInvested)}</CardTitle>
-              <CardDescription>Inverse-volatility base × RSI penalty · Max 15% per stock · Max 25% per sector</CardDescription>
+              <CardDescription>
+                Inverse-volatility base × RSI penalty · Max 15% per stock · Max 25% per sector
+                {alloc.removedStocks.length > 0 && ` · ${alloc.allocation.length} of ${alloc.allocation.length + alloc.removedStocks.length} stocks affordable`}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
