@@ -41,75 +41,96 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* Pastel palette — Robinhood/Groww inspired */
+  --color-pastel-green: #D4F4DD;
+  --color-pastel-green-text: #00875A;
+  --color-pastel-red: #FCE4E4;
+  --color-pastel-red-text: #C0392B;
+  --color-pastel-amber: #FFF4DD;
+  --color-pastel-amber-text: #B7791F;
+  --color-pastel-blue: #DDEBFF;
+  --color-pastel-blue-text: #2563EB;
+  --color-pastel-purple: #EDEBFF;
+  --color-pastel-purple-text: #6D28D9;
+  --color-pastel-peach: #FFE8D6;
+  --color-pastel-peach-text: #C2410C;
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --radius: 0.75rem;
+  /* Warm cream background — like Robinhood's signature */
+  --background: oklch(0.985 0.005 80);
+  --foreground: oklch(0.18 0.005 80);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.18 0.005 80);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --popover-foreground: oklch(0.18 0.005 80);
+  /* Robinhood green as primary */
+  --primary: oklch(0.65 0.19 145);
+  --primary-foreground: oklch(0.99 0 0);
+  /* Soft lavender secondary */
+  --secondary: oklch(0.94 0.02 290);
+  --secondary-foreground: oklch(0.35 0.05 290);
+  /* Muted: warm cream-gray */
+  --muted: oklch(0.96 0.005 80);
+  --muted-foreground: oklch(0.55 0.01 80);
+  /* Accent: peach */
+  --accent: oklch(0.96 0.04 60);
+  --accent-foreground: oklch(0.4 0.08 60);
+  --destructive: oklch(0.6 0.22 25);
+  /* Soft warm border */
+  --border: oklch(0.92 0.008 80);
+  --input: oklch(0.92 0.008 80);
+  --ring: oklch(0.65 0.19 145);
+  /* Chart colors — pastel */
+  --chart-1: oklch(0.65 0.19 145);
+  --chart-2: oklch(0.7 0.13 250);
+  --chart-3: oklch(0.75 0.15 60);
+  --chart-4: oklch(0.7 0.18 320);
+  --chart-5: oklch(0.72 0.15 15);
+  --sidebar: oklch(0.985 0.005 80);
+  --sidebar-foreground: oklch(0.18 0.005 80);
+  --sidebar-primary: oklch(0.65 0.19 145);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.96 0.04 60);
+  --sidebar-accent-foreground: oklch(0.4 0.08 60);
+  --sidebar-border: oklch(0.92 0.008 80);
+  --sidebar-ring: oklch(0.65 0.19 145);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: oklch(0.16 0.008 80);
+  --foreground: oklch(0.97 0.005 80);
+  --card: oklch(0.21 0.01 80);
+  --card-foreground: oklch(0.97 0.005 80);
+  --popover: oklch(0.21 0.01 80);
+  --popover-foreground: oklch(0.97 0.005 80);
+  --primary: oklch(0.7 0.19 145);
+  --primary-foreground: oklch(0.16 0.008 80);
+  --secondary: oklch(0.28 0.02 290);
+  --secondary-foreground: oklch(0.92 0.02 290);
+  --muted: oklch(0.26 0.008 80);
+  --muted-foreground: oklch(0.68 0.01 80);
+  --accent: oklch(0.32 0.04 60);
+  --accent-foreground: oklch(0.85 0.06 60);
+  --destructive: oklch(0.7 0.22 25);
+  --border: oklch(0.32 0.008 80);
+  --input: oklch(0.32 0.008 80);
+  --ring: oklch(0.7 0.19 145);
+  --chart-1: oklch(0.7 0.19 145);
+  --chart-2: oklch(0.7 0.13 250);
+  --chart-3: oklch(0.75 0.15 60);
+  --chart-4: oklch(0.7 0.18 320);
+  --chart-5: oklch(0.72 0.15 15);
+  --sidebar: oklch(0.21 0.01 80);
+  --sidebar-foreground: oklch(0.97 0.005 80);
+  --sidebar-primary: oklch(0.7 0.19 145);
+  --sidebar-primary-foreground: oklch(0.16 0.008 80);
+  --sidebar-accent: oklch(0.32 0.04 60);
+  --sidebar-accent-foreground: oklch(0.85 0.06 60);
+  --sidebar-border: oklch(0.32 0.008 80);
+  --sidebar-ring: oklch(0.7 0.19 145);
 }
 
 @layer base {
@@ -118,5 +139,83 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Slightly smaller default font for denser feel */
+    font-size: 13px;
+    /* Better tabular numbers */
+    font-feature-settings: "tnum" 1, "ss01" 1;
+  }
+  /* Tighter table cell padding for pro feel */
+  table td, table th {
+    @apply py-1.5 px-2;
+  }
+  /* Tabular numbers everywhere in tables */
+  table [class*="tabular-nums"], table .text-right {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Pastel status backgrounds — used for returns, RSI badges, etc. */
+  .pastel-positive {
+    background-color: var(--color-pastel-green);
+    color: var(--color-pastel-green-text);
+  }
+  .pastel-negative {
+    background-color: var(--color-pastel-red);
+    color: var(--color-pastel-red-text);
+  }
+  .pastel-warning {
+    background-color: var(--color-pastel-amber);
+    color: var(--color-pastel-amber-text);
+  }
+  .pastel-info {
+    background-color: var(--color-pastel-blue);
+    color: var(--color-pastel-blue-text);
+  }
+  .pastel-purple {
+    background-color: var(--color-pastel-purple);
+    color: var(--color-pastel-purple-text);
+  }
+  .pastel-peach {
+    background-color: var(--color-pastel-peach);
+    color: var(--color-pastel-peach-text);
+  }
+  /* Friendly card style — soft shadow, rounded. Inline styles (not @apply) to avoid
+     "Cannot apply unknown utility class" error when used inside @layer. */
+  .card-pastel {
+    border-radius: var(--radius-xl);
+    background-color: var(--card);
+    border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  }
+  .card-pastel-hover {
+    border-radius: var(--radius-xl);
+    background-color: var(--card);
+    border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+    transition: box-shadow 150ms ease, border-color 150ms ease;
+  }
+  .card-pastel-hover:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04);
+    border-color: color-mix(in oklch, var(--border) 90%, transparent);
+  }
+  /* Custom scrollbar for dense tables */
+  .scroll-pastel::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-pastel::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scroll-pastel::-webkit-scrollbar-thumb {
+    background-color: oklch(0.85 0.008 80);
+    border-radius: 9999px;
+  }
+  .scroll-pastel::-webkit-scrollbar-thumb:hover {
+    background-color: oklch(0.75 0.008 80);
+  }
+  /* Safe-area padding for mobile bottom nav (iOS notch) */
+  .safe-area-pb {
+    padding-bottom: env(safe-area-inset-bottom, 0);
   }
 }

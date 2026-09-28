@@ -458,49 +458,49 @@ export default function Home() {
   }, [autoRefreshOn, nextRunAt]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
-      {/* Header */}
-      <header className="border-b border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-950/70 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shadow-lg">
-              <TrendingUp className="w-5 h-5" />
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Header — compact */}
+      <header className="border-b border-border/60 bg-card/80 backdrop-blur-md sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-primary-foreground shadow-sm shrink-0">
+              <TrendingUp className="w-4 h-4" />
             </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900 dark:text-white">Nifty Momentum Tracker</h1>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                High Relative Strength &amp; Strong Trend — Live Dashboard
+            <div className="min-w-0">
+              <h1 className="text-sm font-bold text-foreground truncate">Nifty Momentum Tracker</h1>
+              <p className="text-[10px] text-muted-foreground leading-tight truncate">
+                High Relative Strength · Strong Trend
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
-              <Activity className="w-3 h-3 mr-1" /> {screen ? `Last refresh: ${new Date(screen.runAt).toLocaleTimeString("en-IN")}` : "Not run yet"}
+          <div className="flex items-center gap-1.5">
+            <Badge variant="outline" className="pastel-positive text-[10px] px-1.5 py-0 h-5 font-medium hidden sm:inline-flex">
+              <Activity className="w-2.5 h-2.5 mr-1" />
+              {screen ? new Date(screen.runAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}
             </Badge>
             {autoRefreshOn && (
-              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 tabular-nums">
-                <Clock className="w-3 h-3 mr-1" /> Next: {countdown}
+              <Badge variant="outline" className="pastel-info text-[10px] px-1.5 py-0 h-5 font-medium tabular-nums">
+                <Clock className="w-2.5 h-2.5 mr-1" /> {countdown}
               </Badge>
             )}
             <Button
               variant={notifPermission === "granted" ? "default" : "outline"}
               size="sm"
               onClick={requestNotifPermission}
-              // Disable ONLY when we know for sure it's granted/unsupported/denied —
-              // initial "loading" state keeps the button enabled (matches SSR render where Notification is undefined)
               disabled={notifPermission === "granted" || notifPermission === "unsupported" || notifPermission === "denied"}
               suppressHydrationWarning
+              className="h-7 px-2 text-[11px]"
             >
-              {notifPermission === "granted" ? <BellRing className="w-4 h-4 mr-2" /> : <Bell className="w-4 h-4 mr-2" />}
-              <span suppressHydrationWarning>
-                {notifPermission === "granted" ? "Alerts on" : notifPermission === "denied" ? "Blocked" : notifPermission === "unsupported" ? "N/A" : "Alerts"}
+              {notifPermission === "granted" ? <BellRing className="w-3 h-3 sm:mr-1" /> : <Bell className="w-3 h-3 sm:mr-1" />}
+              <span suppressHydrationWarning className="hidden sm:inline">
+                {notifPermission === "granted" ? "On" : notifPermission === "denied" ? "Blocked" : notifPermission === "unsupported" ? "N/A" : "Alerts"}
               </span>
             </Button>
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant={autoRefreshOn ? "default" : "outline"} size="sm">
-                  <Timer className="w-4 h-4 mr-2" />
-                  {autoRefreshOn ? `Auto: ${autoRefreshMin}m` : "Auto-refresh"}
+                <Button variant={autoRefreshOn ? "default" : "outline"} size="sm" className="h-7 px-2 text-[11px]">
+                  <Timer className="w-3 h-3 sm:mr-1" />
+                  <span className="hidden sm:inline">{autoRefreshOn ? `${autoRefreshMin}m` : "Auto"}</span>
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-72" align="end">
@@ -510,7 +510,7 @@ export default function Home() {
                     <Switch id="auto-toggle" checked={autoRefreshOn} onCheckedChange={setAutoRefreshOn} />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-slate-500">Interval</Label>
+                    <Label className="text-xs text-muted-foreground">Interval</Label>
                     <Select value={String(autoRefreshMin)} onValueChange={(v) => setAutoRefreshMin(Number(v))}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -520,39 +520,58 @@ export default function Home() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <p className="text-xs text-slate-500">
-                    When enabled, the dashboard will re-fetch live Top 10 stocks, re-allocate your capital, and refresh stop-loss status every {autoRefreshMin} min. Stress test also re-runs if you’ve already computed it.
+                  <p className="text-xs text-muted-foreground">
+                    Re-fetches live Top 10, re-allocates capital, refreshes stop-loss every {autoRefreshMin} min. Stress + correlation also re-run if open.
                   </p>
                   {autoRefreshOn && nextRunAt && (
-                    <p className="text-xs text-blue-600 font-medium">
+                    <p className="text-xs text-primary font-medium">
                       Next refresh at {new Date(nextRunAt).toLocaleTimeString("en-IN")}
                     </p>
                   )}
                 </div>
               </PopoverContent>
             </Popover>
-            <Button onClick={() => runScreen(false)} disabled={running === "screen"} size="sm">
-              <RefreshCw className={`w-4 h-4 mr-2 ${running === "screen" ? "animate-spin" : ""}`} />
-              {running === "screen" ? "Running…" : "Run Screen"}
+            <Button onClick={() => runScreen(false)} disabled={running === "screen"} size="sm" className="h-7 px-2.5 text-[11px]">
+              <RefreshCw className={`w-3 h-3 sm:mr-1 ${running === "screen" ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline">{running === "screen" ? "Running…" : "Run Screen"}</span>
             </Button>
           </div>
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
-        <Tabs value={tab} onValueChange={setTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 mb-6">
-            <TabsTrigger value="screen" className="gap-2"><Target className="w-4 h-4" /> Screen</TabsTrigger>
-            <TabsTrigger value="alloc" className="gap-2"><Wallet className="w-4 h-4" /> Allocation</TabsTrigger>
-            <TabsTrigger value="stops" className="gap-2"><ShieldAlert className="w-4 h-4" /> Stop-Loss</TabsTrigger>
-            <TabsTrigger value="stress" className="gap-2"><Zap className="w-4 h-4" /> Stress Test</TabsTrigger>
-            <TabsTrigger value="backtest" className="gap-2"><History className="w-4 h-4" /> Backtest</TabsTrigger>
-            <TabsTrigger value="risk" className="gap-2"><GitCompare className="w-4 h-4" /> Risk</TabsTrigger>
-          </TabsList>
+      {/* Desktop / tablet nav — top tabs, icon + label, hidden on mobile */}
+      <nav className="hidden sm:block border-b border-border/60 bg-card/40 sticky top-[49px] z-10">
+        <div className="max-w-7xl mx-auto px-3 sm:px-5">
+          <Tabs value={tab} onValueChange={setTab} className="w-full">
+            <TabsList className="grid w-full grid-cols-6 h-9 bg-transparent p-0 rounded-none border-b-0">
+              <TabsTrigger value="screen" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+                <Target className="w-3.5 h-3.5" /> Screen
+              </TabsTrigger>
+              <TabsTrigger value="alloc" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+                <Wallet className="w-3.5 h-3.5" /> Allocation
+              </TabsTrigger>
+              <TabsTrigger value="stops" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+                <ShieldAlert className="w-3.5 h-3.5" /> Stop-Loss
+              </TabsTrigger>
+              <TabsTrigger value="stress" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+                <Zap className="w-3.5 h-3.5" /> Stress
+              </TabsTrigger>
+              <TabsTrigger value="backtest" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+                <History className="w-3.5 h-3.5" /> Backtest
+              </TabsTrigger>
+              <TabsTrigger value="risk" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+                <GitCompare className="w-3.5 h-3.5" /> Risk
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      </nav>
 
+      {/* Main content — adds bottom padding on mobile for bottom nav */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-5 py-3 sm:py-4 pb-20 sm:pb-6">
+        <Tabs value={tab} onValueChange={setTab} className="w-full">
           {/* ============================== Screen tab ============================== */}
-          <TabsContent value="screen">
+          <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
             <ScreenPanel screen={screen} running={running === "screen"} />
           </TabsContent>
 
@@ -598,9 +617,38 @@ export default function Home() {
         </Tabs>
       </main>
 
-      <footer className="border-t border-slate-200 dark:border-slate-800 mt-auto py-4 text-center text-xs text-slate-500">
+      {/* Footer — desktop only */}
+      <footer className="hidden sm:block border-t border-border/60 py-3 text-center text-[10px] text-muted-foreground">
         Live data from Yahoo Finance · RSI(14) Wilder · Universe: Nifty Total Market · Built with Next.js 16
       </footer>
+
+      {/* Mobile bottom nav — app-style */}
+      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-card border-t border-border/60 backdrop-blur-md safe-area-pb">
+        <div className="grid grid-cols-6 h-14">
+          {[
+            { id: "screen", icon: Target, label: "Screen" },
+            { id: "alloc", icon: Wallet, label: "Alloc" },
+            { id: "stops", icon: ShieldAlert, label: "Stops" },
+            { id: "stress", icon: Zap, label: "Stress" },
+            { id: "backtest", icon: History, label: "Btest" },
+            { id: "risk", icon: GitCompare, label: "Risk" },
+          ].map((t) => {
+            const Icon = t.icon;
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`flex flex-col items-center justify-center gap-0.5 transition-colors ${active ? "text-primary" : "text-muted-foreground"}`}
+              >
+                <Icon className={`w-4 h-4 ${active ? "stroke-[2.5]" : ""}`} />
+                <span className={`text-[9px] ${active ? "font-semibold" : ""}`}>{t.label}</span>
+                {active && <div className="absolute top-0 w-8 h-0.5 bg-primary rounded-full" />}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }
@@ -610,16 +658,16 @@ function ScreenPanel({ screen, running }: { screen: ScreenResponse | null; runni
   if (running && !screen) return <Skeleton className="h-96 w-full" />;
   if (!screen) {
     return (
-      <Card>
+      <Card className="card-pastel">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><TrendingUp className="w-5 h-5 text-emerald-600" /> Momentum Screen — Not yet run</CardTitle>
+          <CardTitle className="flex items-center gap-2"><TrendingUp className="w-5 h-5 text-primary" /> Momentum Screen — Not yet run</CardTitle>
           <CardDescription>
             Click <b>Run Screen</b> at the top to fetch live data for ~{350} NSE stocks and apply the 6 momentum rules.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="rounded-lg border border-dashed border-slate-300 p-6 text-sm text-slate-500">
-            <p className="mb-2 font-medium text-slate-700 dark:text-slate-300">Screening rules:</p>
+          <div className="rounded-lg border border-dashed border-slate-300 p-6 text-sm text-muted-foreground">
+            <p className="mb-2 font-medium text-foreground dark:text-muted-foreground/50">Screening rules:</p>
             <ul className="list-disc pl-5 space-y-1">
               <li>Current Price &gt; 200 DMA</li>
               <li>Current Price &gt; 50 DMA</li>
@@ -645,7 +693,7 @@ function ScreenPanel({ screen, running }: { screen: ScreenResponse | null; runni
       </div>
 
       {/* Top 10 table */}
-      <Card>
+      <Card className="card-pastel">
         <CardHeader>
           <CardTitle>Top 10 Momentum Stocks</CardTitle>
           <CardDescription>
@@ -672,12 +720,12 @@ function ScreenPanel({ screen, running }: { screen: ScreenResponse | null; runni
               <TableBody>
                 {screen.top10.map((s) => (
                   <TableRow key={s.symbol}>
-                    <TableCell className="font-bold text-slate-400">{s.rank}</TableCell>
+                    <TableCell className="font-bold text-muted-foreground/70">{s.rank}</TableCell>
                     <TableCell>
                       <div className="font-semibold">{s.symbol}</div>
-                      <div className="text-xs text-slate-500 line-clamp-1 max-w-[160px]">{s.longName}</div>
+                      <div className="text-xs text-muted-foreground line-clamp-1 max-w-[160px]">{s.longName}</div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell text-slate-600">{s.sector}</TableCell>
+                    <TableCell className="hidden md:table-cell text-muted-foreground">{s.sector}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmt(s.currentPrice)}</TableCell>
                     <TableCell className="text-right">
                       <RsiBadge rsi={s.rsi14} />
@@ -713,7 +761,7 @@ function AllocationPanel({
 }) {
   if (!screen) {
     return (
-      <Card><CardHeader>
+      <Card className="card-pastel"><CardHeader>
         <CardTitle>Portfolio Allocation</CardTitle>
         <CardDescription>Run the screen first to enable allocation.</CardDescription>
       </CardHeader></Card>
@@ -722,9 +770,9 @@ function AllocationPanel({
   return (
     <div className="space-y-4">
       {/* Investment input */}
-      <Card>
+      <Card className="card-pastel">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Wallet className="w-5 h-5 text-emerald-600" /> Investment Amount</CardTitle>
+          <CardTitle className="flex items-center gap-2"><Wallet className="w-5 h-5 text-primary" /> Investment Amount</CardTitle>
           <CardDescription>Enter your total capital to allocate across the Top 10 momentum stocks.</CardDescription>
         </CardHeader>
         <CardContent>
@@ -765,7 +813,7 @@ function AllocationPanel({
           </div>
 
           {/* Allocation table */}
-          <Card>
+          <Card className="card-pastel">
             <CardHeader>
               <CardTitle>Allocation Breakdown — {fmtINR(alloc.totalInvested)}</CardTitle>
               <CardDescription>Inverse-volatility base × RSI penalty · Max 15% per stock · Max 25% per sector</CardDescription>
@@ -790,9 +838,9 @@ function AllocationPanel({
                   <TableBody>
                     {alloc.allocation.map((s, i) => (
                       <TableRow key={s.symbol}>
-                        <TableCell className="font-bold text-slate-400">{i + 1}</TableCell>
+                        <TableCell className="font-bold text-muted-foreground/70">{i + 1}</TableCell>
                         <TableCell className="font-semibold">{s.symbol}</TableCell>
-                        <TableCell className="hidden md:table-cell text-slate-600">{s.sector}</TableCell>
+                        <TableCell className="hidden md:table-cell text-muted-foreground">{s.sector}</TableCell>
                         <TableCell className="text-right tabular-nums">{fmt(s.currentPrice)}</TableCell>
                         <TableCell className="text-right font-semibold">
                           <div className="flex items-center gap-2 justify-end">
@@ -804,7 +852,7 @@ function AllocationPanel({
                         <TableCell className="text-right tabular-nums">{s.shares}</TableCell>
                         <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret6mPct} /></TableCell>
                         <TableCell className="text-right"><RsiBadge rsi={s.rsi14} /></TableCell>
-                        <TableCell className="hidden lg:table-cell text-xs text-slate-500">{s.notes || "—"}</TableCell>
+                        <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{s.notes || "—"}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -814,7 +862,7 @@ function AllocationPanel({
           </Card>
 
           {/* Sector breakdown */}
-          <Card>
+          <Card className="card-pastel">
             <CardHeader>
               <CardTitle>Sector Diversification</CardTitle>
               <CardDescription>Max 25% per sector — ensures no single industry dominates the book</CardDescription>
@@ -824,7 +872,7 @@ function AllocationPanel({
                 {alloc.sectorBreakdown.map((s) => (
                   <div key={s.sector} className="space-y-1">
                     <div className="flex justify-between text-sm">
-                      <span className="font-medium">{s.sector} <span className="text-slate-500">({s.count} stock{s.count > 1 ? "s" : ""})</span></span>
+                      <span className="font-medium">{s.sector} <span className="text-muted-foreground">({s.count} stock{s.count > 1 ? "s" : ""})</span></span>
                       <span className="tabular-nums">{fmt(s.weight * 100, 2)}% · {fmtINR(s.rupees)}</span>
                     </div>
                     <Progress value={s.weight * 100} className="h-2" />
@@ -849,7 +897,7 @@ function StopLossPanel({ stops, running, onRefresh, hasAlloc, onGoToAlloc }: {
 }) {
   if (!hasAlloc) {
     return (
-      <Card><CardHeader>
+      <Card className="card-pastel"><CardHeader>
         <CardTitle>Stop-Loss Monitor</CardTitle>
         <CardDescription>You need an allocation first. <Button variant="link" className="p-0 h-auto" onClick={onGoToAlloc}>Go to Allocation →</Button></CardDescription>
       </CardHeader></Card>
@@ -868,10 +916,10 @@ function StopLossPanel({ stops, running, onRefresh, hasAlloc, onGoToAlloc }: {
         </div>
       )}
 
-      <Card>
+      <Card className="card-pastel">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
-            <CardTitle className="flex items-center gap-2"><ShieldAlert className="w-5 h-5 text-emerald-600" /> Stop-Loss Status</CardTitle>
+            <CardTitle className="flex items-center gap-2"><ShieldAlert className="w-5 h-5 text-primary" /> Stop-Loss Status</CardTitle>
             <CardDescription>
               Rules: Trend (close &lt; 50 DMA) · Hard stop (entry − 8%) · Trailing (peak × 0.85) · Watch zone (within 2%)
             </CardDescription>
@@ -905,7 +953,7 @@ function StopLossPanel({ stops, running, onRefresh, hasAlloc, onGoToAlloc }: {
                       <TableCell className="text-right tabular-nums font-medium">{fmt(s.currentPrice)}</TableCell>
                       <TableCell className="text-right hidden sm:table-cell tabular-nums">{fmt(s.dma50)}</TableCell>
                       <TableCell className="text-right hidden md:table-cell tabular-nums">{fmt(s.peakSinceEntry)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-red-600">{fmt(s.activeStop)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-[var(--color-pastel-red-text)]">{fmt(s.activeStop)}</TableCell>
                       <TableCell className="text-right tabular-nums"><ReturnCell pct={s.pnlPct} /></TableCell>
                       <TableCell className="text-right hidden sm:table-cell tabular-nums"><ReturnCell pct={s.pnlRupees} rupeeMode /></TableCell>
                       <TableCell className="text-center"><StatusBadge status={s.status} /></TableCell>
@@ -914,9 +962,9 @@ function StopLossPanel({ stops, running, onRefresh, hasAlloc, onGoToAlloc }: {
                 </TableBody>
               </Table>
               {stops.stops.some((s) => s.reasons) && (
-                <div className="mt-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs">
-                  <div className="font-medium text-amber-800 mb-1">⚠ Watch / Exit reasons:</div>
-                  <ul className="space-y-1 text-amber-700">
+                <div className="mt-4 p-3 rounded-lg pastel-warning border text-xs">
+                  <div className="font-medium text-[var(--color-pastel-amber-text)] mb-1">⚠ Watch / Exit reasons:</div>
+                  <ul className="space-y-1 text-[var(--color-pastel-amber-text)]">
                     {stops.stops.filter((s) => s.reasons).map((s) => (
                       <li key={s.symbol}><b>{s.symbol}</b>: {s.reasons}</li>
                     ))}
@@ -925,7 +973,7 @@ function StopLossPanel({ stops, running, onRefresh, hasAlloc, onGoToAlloc }: {
               )}
             </div>
           ) : (
-            <div className="text-sm text-slate-500 p-6 text-center">
+            <div className="text-sm text-muted-foreground p-6 text-center">
               Click <b>Refresh</b> to fetch live prices and apply stop rules.
             </div>
           )}
@@ -944,7 +992,7 @@ function StressPanel({ stress, onRun, hasAlloc, onGoToAlloc }: {
 }) {
   if (!hasAlloc) {
     return (
-      <Card><CardHeader>
+      <Card className="card-pastel"><CardHeader>
         <CardTitle>Stress Test</CardTitle>
         <CardDescription>You need an allocation first. <Button variant="link" className="p-0 h-auto" onClick={onGoToAlloc}>Go to Allocation →</Button></CardDescription>
       </CardHeader></Card>
@@ -952,10 +1000,10 @@ function StressPanel({ stress, onRun, hasAlloc, onGoToAlloc }: {
   }
   return (
     <div className="space-y-4">
-      <Card>
+      <Card className="card-pastel">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
-            <CardTitle className="flex items-center gap-2"><Zap className="w-5 h-5 text-amber-500" /> Stress Test Scenarios</CardTitle>
+            <CardTitle className="flex items-center gap-2"><Zap className="w-5 h-5 text-[var(--color-pastel-amber-text)]" /> Stress Test Scenarios</CardTitle>
             <CardDescription>5 adverse scenarios simulated against your live allocation</CardDescription>
           </div>
           <Button onClick={onRun} size="sm" variant="outline">
@@ -968,31 +1016,31 @@ function StressPanel({ stress, onRun, hasAlloc, onGoToAlloc }: {
               {/* Summary cards per scenario */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
                 {stress.scenarios.map((sc) => (
-                  <Card key={sc.name} className={sc.drawdownPct > 15 ? "border-red-300 bg-red-50/50" : sc.drawdownPct > 10 ? "border-amber-300 bg-amber-50/50" : ""}>
+                  <Card key={sc.name} className={sc.drawdownPct > 15 ? " pastel-negative/50" : sc.drawdownPct > 10 ? " pastel-warning/50" : ""}>
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between mb-2">
                         <div>
                           <div className="font-semibold text-sm">{sc.name}</div>
-                          <div className="text-xs text-slate-500 mt-0.5">{sc.description}</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">{sc.description}</div>
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-sm">
                         <div>
-                          <div className="text-xs text-slate-500">Drawdown</div>
-                          <div className={`font-bold tabular-nums ${sc.drawdownPct > 15 ? "text-red-600" : sc.drawdownPct > 10 ? "text-amber-600" : "text-slate-700"}`}>
+                          <div className="text-xs text-muted-foreground">Drawdown</div>
+                          <div className={`font-bold tabular-nums ${sc.drawdownPct > 15 ? "text-[var(--color-pastel-red-text)]" : sc.drawdownPct > 10 ? "text-[var(--color-pastel-amber-text)]" : "text-foreground"}`}>
                             {sc.drawdownPct.toFixed(2)}%
                           </div>
                         </div>
                         <div>
-                          <div className="text-xs text-slate-500">₹ Loss</div>
-                          <div className="font-bold tabular-nums text-red-600">{fmtINR(sc.totalLoss)}</div>
+                          <div className="text-xs text-muted-foreground">₹ Loss</div>
+                          <div className="font-bold tabular-nums text-[var(--color-pastel-red-text)]">{fmtINR(sc.totalLoss)}</div>
                         </div>
                         <div>
-                          <div className="text-xs text-slate-500"># Stocks hit</div>
+                          <div className="text-xs text-muted-foreground"># Stocks hit</div>
                           <div className="font-semibold tabular-nums">{sc.stocksHit}</div>
                         </div>
                         <div>
-                          <div className="text-xs text-slate-500">Worst stock</div>
+                          <div className="text-xs text-muted-foreground">Worst stock</div>
                           <div className="font-semibold text-xs">{sc.worstStockSymbol}</div>
                         </div>
                       </div>
@@ -1006,21 +1054,21 @@ function StressPanel({ stress, onRun, hasAlloc, onGoToAlloc }: {
                 <CardContent className="p-4">
                   <div className="grid grid-cols-2 gap-4 text-center">
                     <div>
-                      <div className="text-xs text-slate-500 uppercase tracking-wide">Worst-case drawdown</div>
-                      <div className="text-2xl font-bold text-red-600">{stress.worstDrawdown.toFixed(2)}%</div>
-                      <div className="text-xs text-slate-500">{fmtINR(Math.abs(stress.worstLoss))} loss</div>
+                      <div className="text-xs text-muted-foreground uppercase tracking-wide">Worst-case drawdown</div>
+                      <div className="text-2xl font-bold text-[var(--color-pastel-red-text)]">{stress.worstDrawdown.toFixed(2)}%</div>
+                      <div className="text-xs text-muted-foreground">{fmtINR(Math.abs(stress.worstLoss))} loss</div>
                     </div>
                     <div>
-                      <div className="text-xs text-slate-500 uppercase tracking-wide">Recommended cash buffer</div>
-                      <div className="text-2xl font-bold text-amber-600">{fmtINR(Math.abs(stress.worstLoss))}</div>
-                      <div className="text-xs text-slate-500">to survive worst case</div>
+                      <div className="text-xs text-muted-foreground uppercase tracking-wide">Recommended cash buffer</div>
+                      <div className="text-2xl font-bold text-[var(--color-pastel-amber-text)]">{fmtINR(Math.abs(stress.worstLoss))}</div>
+                      <div className="text-xs text-muted-foreground">to survive worst case</div>
                     </div>
                   </div>
                 </CardContent>
               </Card>
             </>
           ) : (
-            <div className="text-sm text-slate-500 p-6 text-center">
+            <div className="text-sm text-muted-foreground p-6 text-center">
               Click <b>Run Stress Test</b> to simulate 5 adverse scenarios against your current allocation.
             </div>
           )}
@@ -1029,7 +1077,7 @@ function StressPanel({ stress, onRun, hasAlloc, onGoToAlloc }: {
 
       {/* Per-scenario detail tables */}
       {stress && (
-        <Card>
+        <Card className="card-pastel">
           <CardHeader>
             <CardTitle>Per-Stock Impact by Scenario</CardTitle>
             <CardDescription>How each holding responds in each scenario</CardDescription>
@@ -1060,8 +1108,8 @@ function StressPanel({ stress, onRun, hasAlloc, onGoToAlloc }: {
                           <TableRow key={d.symbol}>
                             <TableCell className="font-medium">{d.symbol}</TableCell>
                             <TableCell className="text-right tabular-nums">{fmtINR(d.rupees)}</TableCell>
-                            <TableCell className="text-right tabular-nums text-red-600">{(d.shockPct * 100).toFixed(0)}%</TableCell>
-                            <TableCell className="text-right tabular-nums text-red-600">{fmtINR(d.rupeeLoss)}</TableCell>
+                            <TableCell className="text-right tabular-nums text-[var(--color-pastel-red-text)]">{(d.shockPct * 100).toFixed(0)}%</TableCell>
+                            <TableCell className="text-right tabular-nums text-[var(--color-pastel-red-text)]">{fmtINR(d.rupeeLoss)}</TableCell>
                             <TableCell className="text-right tabular-nums">{fmtINR(d.newValue)}</TableCell>
                           </TableRow>
                         ))}
@@ -1080,46 +1128,50 @@ function StressPanel({ stress, onRun, hasAlloc, onGoToAlloc }: {
 
 /* ---------------------------------------------------------------- helpers */
 function StatCard({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: string; value: string; sub?: string; tone?: "emerald" | "amber" | "red" }) {
-  const toneClass = tone === "emerald" ? "text-emerald-600" : tone === "amber" ? "text-amber-600" : tone === "red" ? "text-red-600" : "text-slate-900 dark:text-white";
+  const toneBg = tone === "emerald" ? "pastel-positive" : tone === "amber" ? "pastel-warning" : tone === "red" ? "pastel-negative" : "";
+  const toneText = tone === "emerald" ? "text-[var(--color-pastel-green-text)]" : tone === "amber" ? "text-[var(--color-pastel-amber-text)]" : tone === "red" ? "text-[var(--color-pastel-red-text)]" : "text-foreground";
   return (
-    <Card>
-      <CardContent className="p-4">
+    <Card className="card-pastel">
+      <CardContent className="p-3">
         <div className="flex items-center justify-between mb-1">
-          <span className="text-xs text-slate-500 uppercase tracking-wide">{label}</span>
-          <span className="text-slate-400">{icon}</span>
+          <span className="text-[9px] text-muted-foreground uppercase tracking-wide font-medium">{label}</span>
+          <span className={`${toneBg} rounded-md p-0.5 ${tone === "emerald" || tone === "amber" || tone === "red" ? "" : "bg-muted"} flex items-center`}>{icon}</span>
         </div>
-        <div className={`text-lg font-bold tabular-nums ${toneClass}`}>{value}</div>
-        {sub && <div className="text-xs text-slate-500 mt-0.5">{sub}</div>}
+        <div className={`text-base font-bold tabular-nums leading-tight ${toneText}`}>{value}</div>
+        {sub && <div className="text-[10px] text-muted-foreground mt-0.5 truncate">{sub}</div>}
       </CardContent>
     </Card>
   );
 }
 
 function ReturnCell({ pct, rupeeMode }: { pct: number; rupeeMode?: boolean }) {
-  if (isNaN(pct)) return <span className="text-slate-400">—</span>;
+  if (isNaN(pct)) return <span className="text-muted-foreground">—</span>;
   const positive = pct >= 0;
-  const cls = positive ? "text-emerald-600" : "text-red-600";
+  const cls = positive ? "pastel-positive" : "pastel-negative";
   const Icon = positive ? ArrowUp : ArrowDown;
+  const val = rupeeMode
+    ? `${pct >= 0 ? "+" : "−"}₹${Math.abs(Math.round(pct)).toLocaleString("en-IN")}`
+    : `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`;
   return (
-    <span className={`inline-flex items-center gap-0.5 font-medium ${cls}`}>
-      <Icon className="w-3 h-3" />
-      {rupeeMode ? `${pct >= 0 ? "+" : "−"}₹${Math.abs(Math.round(pct)).toLocaleString("en-IN")}` : `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`}
+    <span className={`inline-flex items-center gap-0.5 font-semibold tabular-nums px-1.5 py-0.5 rounded text-[10px] ${cls}`}>
+      <Icon className="w-2.5 h-2.5" />
+      {val}
     </span>
   );
 }
 
 function RsiBadge({ rsi }: { rsi: number }) {
-  const tone = rsi > 80 ? "bg-red-100 text-red-700 border-red-200" : rsi > 70 ? "bg-amber-100 text-amber-700 border-amber-200" : rsi > 55 ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-600 border-slate-200";
-  return <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${tone}`}>{rsi.toFixed(1)}</span>;
+  const cls = rsi > 80 ? "pastel-negative" : rsi > 70 ? "pastel-warning" : rsi > 55 ? "pastel-positive" : "pastel-purple";
+  return <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold tabular-nums ${cls}`}>{rsi.toFixed(1)}</span>;
 }
 
 function StatusBadge({ status }: { status: "HOLD" | "WATCH" | "EXIT" }) {
   const map = {
-    HOLD: "bg-emerald-100 text-emerald-700 border-emerald-200",
-    WATCH: "bg-amber-100 text-amber-700 border-amber-200",
-    EXIT: "bg-red-100 text-red-700 border-red-200",
+    HOLD: "pastel-positive",
+    WATCH: "pastel-warning",
+    EXIT: "pastel-negative",
   };
-  return <span className={`inline-flex items-center px-2.5 py-1 rounded text-xs font-bold border ${map[status]}`}>{status}</span>;
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold ${map[status]}`}>{status}</span>;
 }
 
 /* ---------------------------------------------------------------- BacktestPanel */
@@ -1130,10 +1182,10 @@ function BacktestPanel({ backtest, running, onRun }: {
 }) {
   return (
     <div className="space-y-4">
-      <Card>
+      <Card className="card-pastel">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
-            <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Strategy Backtest — 2 Years</CardTitle>
+            <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-primary" /> Strategy Backtest — 2 Years</CardTitle>
             <CardDescription>
               Monthly rebalance · equal weight Top 10 · compared vs Nifty 50 benchmark
               {backtest?.cached && " · (cached)"}
@@ -1146,7 +1198,7 @@ function BacktestPanel({ backtest, running, onRun }: {
         </CardHeader>
         <CardContent>
           {!backtest && !running && (
-            <div className="text-sm text-slate-500 p-6 text-center">
+            <div className="text-sm text-muted-foreground p-6 text-center">
               Click <b>Run Backtest</b> to replay this strategy every month for the last 2 years.
               <br />
               <span className="text-xs">Takes ~30-60 seconds. Compares equity curve vs Nifty 50, computes CAGR, Sharpe, max drawdown, win rate.</span>
@@ -1154,7 +1206,7 @@ function BacktestPanel({ backtest, running, onRun }: {
           )}
           {running && !backtest && <Skeleton className="h-96 w-full" />}
           {backtest?.error && (
-            <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+            <div className="p-4 rounded-lg pastel-negative border text-sm text-[var(--color-pastel-red-text)]">
               <b>Backtest failed:</b> {backtest.error}
             </div>
           )}
@@ -1250,7 +1302,7 @@ function BacktestPanel({ backtest, running, onRun }: {
               </Card>
 
               {/* Monthly returns table */}
-              <Card>
+              <Card className="card-pastel">
                 <CardHeader>
                   <CardTitle className="text-base">Monthly Returns — Last 12 Months</CardTitle>
                   <CardDescription>Strategy return vs Nifty 50 per rebalance period</CardDescription>
@@ -1290,17 +1342,17 @@ function BacktestPanel({ backtest, running, onRun }: {
                 <CardContent>
                   <div className="space-y-3">
                     {backtest.picks_history.map((p, i) => (
-                      <div key={i} className="border border-slate-200 rounded-lg p-3">
+                      <div key={i} className="border border-border/60 rounded-lg p-3">
                         <div className="flex items-center justify-between mb-2">
                           <span className="font-medium text-sm">{p.date}</span>
                           <div className="flex gap-3 text-xs">
-                            <span className="text-emerald-600">Strategy: {p.strategy_ret > 0 ? "+" : ""}{p.strategy_ret.toFixed(2)}%</span>
-                            <span className="text-slate-500">Nifty: {p.benchmark_ret > 0 ? "+" : ""}{p.benchmark_ret.toFixed(2)}%</span>
+                            <span className="text-primary">Strategy: {p.strategy_ret > 0 ? "+" : ""}{p.strategy_ret.toFixed(2)}%</span>
+                            <span className="text-muted-foreground">Nifty: {p.benchmark_ret > 0 ? "+" : ""}{p.benchmark_ret.toFixed(2)}%</span>
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-1">
                           {p.picks.map((s) => (
-                            <span key={s} className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-xs font-medium">{s}</span>
+                            <span key={s} className="px-2 py-0.5 bg-muted text-foreground rounded text-xs font-medium">{s}</span>
                           ))}
                         </div>
                       </div>
@@ -1309,7 +1361,7 @@ function BacktestPanel({ backtest, running, onRun }: {
                 </CardContent>
               </Card>
 
-              <p className="text-xs text-slate-500 mt-4">
+              <p className="text-xs text-muted-foreground mt-4">
                 Methodology: Equal-weighted Top 10 stocks passing all 6 momentum rules, rebalanced monthly over {backtest.summary.backtest_period}. {backtest.summary.rebalances} rebalances total.
                 Past performance does not guarantee future results.
               </p>
@@ -1331,7 +1383,7 @@ function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
 }) {
   if (!hasAlloc) {
     return (
-      <Card><CardHeader>
+      <Card className="card-pastel"><CardHeader>
         <CardTitle>Risk Analysis</CardTitle>
         <CardDescription>You need an allocation first. <Button variant="link" className="p-0 h-auto" onClick={onGoToAlloc}>Go to Allocation →</Button></CardDescription>
       </CardHeader></Card>
@@ -1340,10 +1392,10 @@ function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card className="card-pastel">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
-            <CardTitle className="flex items-center gap-2"><GitCompare className="w-5 h-5 text-emerald-600" /> Correlation Matrix</CardTitle>
+            <CardTitle className="flex items-center gap-2"><GitCompare className="w-5 h-5 text-primary" /> Correlation Matrix</CardTitle>
             <CardDescription>
               Pairwise correlation of daily returns · last 6 months · {correlation?.nDataPoints ?? 0} data points
             </CardDescription>
@@ -1356,7 +1408,7 @@ function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
         <CardContent>
           {running && !correlation && <Skeleton className="h-64 w-full" />}
           {correlation?.error && (
-            <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+            <div className="p-4 rounded-lg pastel-negative border text-sm text-[var(--color-pastel-red-text)]">
               <b>Correlation failed:</b> {correlation.error}
             </div>
           )}
@@ -1389,15 +1441,15 @@ function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
 
               {/* Hidden concentration warning */}
               {correlation.highCorrelationPairs.length > 0 && (
-                <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm">
-                  <div className="font-medium text-amber-800 mb-1">⚠ Hidden Concentration Detected</div>
-                  <p className="text-amber-700 mb-2">
+                <div className="mb-4 p-3 rounded-lg pastel-warning border text-sm">
+                  <div className="font-medium text-[var(--color-pastel-amber-text)] mb-1">⚠ Hidden Concentration Detected</div>
+                  <p className="text-[var(--color-pastel-amber-text)] mb-2">
                     These stock pairs move together (|ρ| &gt; 0.70). Even though your sector caps are respected,
                     you effectively have fewer independent bets than your {correlation.symbols.length} holdings suggest.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {correlation.highCorrelationPairs.map((p, i) => (
-                      <span key={i} className="px-2 py-1 bg-amber-100 text-amber-800 rounded text-xs font-medium">
+                      <span key={i} className="px-2 py-1 pastel-warning text-[var(--color-pastel-amber-text)] rounded text-xs font-medium">
                         {p.a} ↔ {p.b} (ρ = {p.rho > 0 ? "+" : ""}{p.rho})
                       </span>
                     ))}
@@ -1411,7 +1463,7 @@ function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
                   <thead>
                     <tr>
                       {correlation.matrix[0].map((cell, i) => (
-                        <th key={i} className="px-1 py-1 text-slate-500 font-medium sticky left-0 bg-white">
+                        <th key={i} className="px-1 py-1 text-muted-foreground font-medium sticky left-0 bg-white">
                           {typeof cell === "string" ? cell.slice(0, 6) : cell}
                         </th>
                       ))}
@@ -1423,7 +1475,7 @@ function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
                         {row.map((cell, ci) => {
                           if (ci === 0) {
                             return (
-                              <td key={ci} className="px-2 py-1 font-medium text-slate-700 sticky left-0 bg-white">
+                              <td key={ci} className="px-2 py-1 font-medium text-foreground sticky left-0 bg-white">
                                 {typeof cell === "string" ? cell.slice(0, 6) : cell}
                               </td>
                             );
@@ -1431,7 +1483,7 @@ function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
                           const rho = typeof cell === "number" ? cell : 0;
                           const isDiagonal = ri === ci - 1;
                           const bg = correlationColor(rho);
-                          const textColor = Math.abs(rho) > 0.6 ? "text-white" : "text-slate-700";
+                          const textColor = Math.abs(rho) > 0.6 ? "text-white" : "text-foreground";
                           return (
                             <td
                               key={ci}
@@ -1449,7 +1501,7 @@ function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
                 </table>
               </div>
 
-              <p className="text-xs text-slate-500 mt-4">
+              <p className="text-xs text-muted-foreground mt-4">
                 <b>Effective bets</b> = (Σw)² / Σ(wᵢ × wⱼ × ρᵢⱼ) — measures how many truly independent positions you hold.
                 Lower than your actual holding count means hidden concentration.
                 <br />
@@ -1458,7 +1510,7 @@ function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
             </>
           )}
           {!correlation && !running && (
-            <div className="text-sm text-slate-500 p-6 text-center">
+            <div className="text-sm text-muted-foreground p-6 text-center">
               Click <b>Compute</b> to fetch 6 months of daily returns and analyze correlation.
             </div>
           )}
