@@ -73,6 +73,46 @@ UNIVERSE = [
     "VIPIND", "MINDACORP", "TALBROAUTO", "BATAINDIA", "FILATEX",
     "TIMKEN", "SKFINDIA", "SCHAEFFLER",
     "MFSL", "AETHER",
+    # ---- Curated mid + small cap additions (~120 unique stocks, no dupes with above) ----
+    # Pharma & healthcare (additional)
+    "AARTIDRUGS", "AARTIPHARM", "ADVANZPHARMA", "BAYERCROP", "BLISSGVS",
+    "CAPLI", "FDC", "GLENMARKLIFE", "GRANULES", "LAURUSLABS",
+    "NATCO", "NEULAND", "ORCHIDPH", "PANACEABIO", "SANOFI",
+    "SHILPAMED", "STRIDES", "SUVEN", "THYROCARE", "WOCKPHARMA",
+    # Chemicals & specialty (additional)
+    "ACRYSIL", "ADVANTA", "AETHERIND", "APARINDS", "BALAJIAMINE",
+    "BASF", "BHARATRAS", "BORORENEW", "CAMLIN", "CAMLINFINE",
+    "DCMSHRIRAM", "EIDPARRY", "EPL", "FINEORG", "GHCL",
+    "GNFC", "GOCLCORP", "GOODYEAR", "GRAPHITE", "GRAVITA",
+    "GUJALKALI", "JINDALSAW", "NAVINFLUOR", "NOCIL", "ROSSARI",
+    "SAREGAMA", "SIGIND", "SOLARINDS", "SOMANY", "SUDARSHCHEM",
+    "TANLA", "TATVA", "VINATIORGA",
+    # Auto & ancillary (additional)
+    "CARBORUNIV", "EMMJUNI", "FIEMIND", "FORCEMOT", "GABRIEL",
+    "JBM", "JTLIND", "METROBRAND", "PRECISION", "RICOAUTO",
+    "SUBROS", "SUNFLAG", "UCALFUEL", "UNOMINDA", "VARROC",
+    "WABCOIND", "WHEELS",
+    # Banks & financials (additional)
+    "BANKINDIA", "CANFINHOME", "DCBBANK", "EQUITASBNK", "IDBI",
+    "INDIANB", "KARURVYSYA", "PEERRE", "SOUTHINDIAN",
+    "SUNDARMFIN",
+    # FMCG & consumer (additional)
+    "BLUEDART", "CCL", "GILLETTE", "NILKAMAL", "PATANJALI",
+    "RUCHI", "VENKEYS", "VSTIND", "WIMPLAST",
+    # Industrials / infra (additional unique)
+    "ANSAL", "BBLUNTA", "CADILAHC", "CHENNPETRO", "DELTACORP",
+    "DHANUKA", "DIXON", "GMRINFRA", "HERITGFOOD", "INOXWIND",
+    "JKLAKSHMI", "KANSAINER", "KIRLOSBROS", "KIRLOSENG", "LAXMIMACH",
+    "LODHA", "MAHABANK", "MEGH", "METROPOLIS", "MINDTREE",
+    "OBEROIRLTY", "PAGEIND", "PHOENIX", "PRECAM", "PRINCEPIPE",
+    "RAMCOCEM", "RELINFRA", "SCHAEFFLER", "SELANE", "SKFINDIA",
+    "SOBHA", "SPICEJET", "TIMKEN", "TTKPRESTIG", "TTKHLTH",
+    "WELENT",
+    # New-age / digital
+    "BSE", "HAPPY", "LATENTVIEW", "MAPMYINDIA", "NYKAA",
+    "PAYTM", "PBFINTECH", "POLICYBZR", "ZOMATO",
+    # Energy / utilities (additional)
+    "ADANIGREEN", "INDIGAS", "KEC", "OIL", "TPGPWR",
 ]
 UNIVERSE = list(dict.fromkeys(UNIVERSE))
 
@@ -139,7 +179,19 @@ def compute_metrics(symbol, candles_df):
     }
 
 
-def cmd_screen(top_n: int = 10):
+def cmd_screen(top_n: int = 10, filters: dict | None = None):
+    """Run screen with optional custom filter thresholds.
+
+    filters keys (all optional, defaults match user's original strategy):
+      - rsi_min (float, default 50 — was 55, loosened to yield more qualifiers)
+      - mcap_min_cr (float, default 200 — was 500, loosened)
+      - vol_min (int, default 20000 — was 50000, loosened)
+    """
+    f = filters or {}
+    rsi_min = float(f.get("rsi_min", 50))
+    mcap_min_cr = float(f.get("mcap_min_cr", 200))
+    vol_min = float(f.get("vol_min", 20000))
+
     tickers = [f"{s}.NS" for s in UNIVERSE]
     raw = yf.download(tickers, period="18mo", group_by="ticker",
                      threads=True, progress=False, auto_adjust=False)
@@ -157,13 +209,13 @@ def cmd_screen(top_n: int = 10):
         m = compute_metrics(sym, df)
         if m:
             metrics.append(m)
-    # Technical + volume filter
+    # Technical + volume filter — now parameterized
     passed_tech = [m for m in metrics
                    if m["currentPrice"] > m["dma200"]
                    and m["currentPrice"] > m["dma50"]
                    and m["dma50"] > m["dma200"]
-                   and m["rsi14"] > 55
-                   and m["avgVolume30d"] > 50000
+                   and m["rsi14"] > rsi_min
+                   and m["avgVolume30d"] > vol_min
                    and m["ret6mPct"] is not None]
     # Fetch market cap + sector via .info
     out = []
@@ -172,7 +224,7 @@ def cmd_screen(top_n: int = 10):
             t = yf.Ticker(f"{m['symbol']}.NS")
             info = t.info or {}
             mc = info.get("marketCap")
-            if mc is None or mc / 1e7 <= 500:
+            if mc is None or mc / 1e7 <= mcap_min_cr:
                 continue
             out.append({
                 **m,
@@ -276,7 +328,14 @@ if __name__ == "__main__":
                 top_n = max(1, min(50, int(sys.argv[2])))  # clamp 1-50
             except ValueError:
                 pass
-        cmd_screen(top_n=top_n)
+        # Optional third argument: filters JSON
+        filters = None
+        if len(sys.argv) > 3:
+            try:
+                filters = json.loads(sys.argv[3])
+            except (json.JSONDecodeError, ValueError):
+                pass
+        cmd_screen(top_n=top_n, filters=filters)
     elif cmd == "stops":
         payload = json.loads(sys.argv[2])
         cmd_stops(payload)

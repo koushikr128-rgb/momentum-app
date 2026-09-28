@@ -17,7 +17,7 @@ import { toast } from "@/hooks/use-toast";
 import {
   Activity, ArrowDown, ArrowUp, RefreshCw, AlertTriangle,
   ShieldAlert, TrendingUp, TrendingDown, Gauge, Wallet, Target, Zap, Timer, Clock,
-  Bell, BellRing, History, GitCompare,
+  Bell, BellRing, History, GitCompare, SlidersHorizontal,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -125,6 +125,9 @@ export default function Home() {
   const [topN, setTopN] = useState(10);  // ← NEW: customizable portfolio size
   const [allocDirty, setAllocDirty] = useState(false);
 
+  // Filter thresholds (loosened defaults yield ~25 qualifiers)
+  const [filters, setFilters] = useState({ rsiMin: 50, mcapMin: 200, volMin: 20000 });
+
   // Auto-refresh state
   const [autoRefreshOn, setAutoRefreshOn] = useState(false);
   const [autoRefreshMin, setAutoRefreshMin] = useState(60);
@@ -150,11 +153,18 @@ export default function Home() {
     setNotifPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
   }, []);
 
-  const runScreen = useCallback(async (silent = false, topNOverride?: number) => {
+  const runScreen = useCallback(async (silent = false, topNOverride?: number, filtersOverride?: typeof filters) => {
     if (!silent) setRunning("screen");
     try {
       const n = topNOverride ?? topN;
-      const res = await fetch(`/api/screen?topN=${n}`, { cache: "no-store" });
+      const f = filtersOverride ?? filters;
+      const qs = new URLSearchParams({
+        topN: String(n),
+        rsiMin: String(f.rsiMin),
+        mcapMin: String(f.mcapMin),
+        volMin: String(f.volMin),
+      });
+      const res = await fetch(`/api/screen?${qs}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`Screen failed (${res.status})`);
       const data: ScreenResponse = await res.json();
       setScreen(data);
@@ -169,7 +179,7 @@ export default function Home() {
     } finally {
       setRunning(null);
     }
-  }, [topN]);
+  }, [topN, filters]);
 
   const runAllocation = useCallback(async (silent = false) => {
     if (!screen) return;
@@ -560,6 +570,107 @@ export default function Home() {
               </Select>
               <Label htmlFor="topn-select" className="text-[10px] text-muted-foreground hidden sm:inline">stocks</Label>
             </div>
+            {/* Filters popover — adjustable RSI, MCap, Vol thresholds */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]">
+                  <SlidersHorizontal className="w-3 h-3 sm:mr-1" />
+                  <span className="hidden sm:inline">Filters</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80" align="end">
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <Label className="text-xs font-medium">Min RSI(14)</Label>
+                      <span className="text-xs font-bold tabular-nums text-primary">{filters.rsiMin}</span>
+                    </div>
+                    <input
+                      type="range" min={40} max={70} step={5}
+                      value={filters.rsiMin}
+                      onChange={(e) => setFilters({ ...filters, rsiMin: Number(e.target.value) })}
+                      className="w-full accent-primary"
+                    />
+                    <div className="flex justify-between text-[9px] text-muted-foreground">
+                      <span>40 (loose)</span>
+                      <span>55 (original)</span>
+                      <span>70 (strict)</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <Label className="text-xs font-medium">Min Market Cap (₹ Cr)</Label>
+                      <span className="text-xs font-bold tabular-nums text-primary">₹{filters.mcapMin}</span>
+                    </div>
+                    <input
+                      type="range" min={100} max={2000} step={100}
+                      value={filters.mcapMin}
+                      onChange={(e) => setFilters({ ...filters, mcapMin: Number(e.target.value) })}
+                      className="w-full accent-primary"
+                    />
+                    <div className="flex justify-between text-[9px] text-muted-foreground">
+                      <span>₹100</span>
+                      <span>₹500 (orig)</span>
+                      <span>₹2,000</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <Label className="text-xs font-medium">Min 30D Avg Volume</Label>
+                      <span className="text-xs font-bold tabular-nums text-primary">{filters.volMin.toLocaleString("en-IN")}</span>
+                    </div>
+                    <input
+                      type="range" min={10000} max={100000} step={5000}
+                      value={filters.volMin}
+                      onChange={(e) => setFilters({ ...filters, volMin: Number(e.target.value) })}
+                      className="w-full accent-primary"
+                    />
+                    <div className="flex justify-between text-[9px] text-muted-foreground">
+                      <span>10k</span>
+                      <span>50k (orig)</span>
+                      <span>100k</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-2 border-t border-border/40">
+                    <Button
+                      size="sm"
+                      className="h-7 flex-1 text-[11px]"
+                      onClick={() => {
+                        setFilters({ rsiMin: 50, mcapMin: 200, volMin: 20000 });
+                        toast({ title: "Reset to loosened defaults", description: "RSI>50, MCap>₹200Cr, Vol>20k" });
+                      }}
+                      variant="outline"
+                    >
+                      Reset defaults
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-7 flex-1 text-[11px]"
+                      onClick={() => {
+                        setFilters({ rsiMin: 55, mcapMin: 500, volMin: 50000 });
+                        toast({ title: "Restored original strategy", description: "RSI>55, MCap>₹500Cr, Vol>50k" });
+                      }}
+                      variant="outline"
+                    >
+                      Original (strict)
+                    </Button>
+                  </div>
+                  <Button
+                    size="sm"
+                    className="h-8 w-full text-[11px]"
+                    onClick={() => runScreen(false, undefined, filters)}
+                    disabled={running === "screen"}
+                  >
+                    <RefreshCw className={`w-3 h-3 mr-1.5 ${running === "screen" ? "animate-spin" : ""}`} />
+                    Apply &amp; Re-run Screen
+                  </Button>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Loosened defaults (RSI&gt;50, MCap&gt;₹200Cr, Vol&gt;20k) typically yield 25-30 qualifiers from the 511-stock universe.
+                    Original strategy rules (RSI&gt;55, MCap&gt;₹500Cr, Vol&gt;50k) typically yield 10-12.
+                  </p>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
       </header>
@@ -597,7 +708,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -679,7 +790,7 @@ export default function Home() {
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN }: { screen: ScreenResponse | null; running: boolean; topN: number }) {
+function ScreenPanel({ screen, running, topN, filters }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number } }) {
   if (running && !screen) return <Skeleton className="h-96 w-full" />;
   if (!screen) {
     return (
@@ -697,9 +808,9 @@ function ScreenPanel({ screen, running, topN }: { screen: ScreenResponse | null;
               <li>Current Price &gt; 200 DMA</li>
               <li>Current Price &gt; 50 DMA</li>
               <li>50 DMA &gt; 200 DMA</li>
-              <li>RSI(14) &gt; 55</li>
-              <li>Market Cap &gt; ₹500 Cr</li>
-              <li>30-day Avg Volume &gt; 50,000</li>
+              <li>RSI(14) &gt; {filters.rsiMin}</li>
+              <li>Market Cap &gt; ₹{filters.mcapMin} Cr</li>
+              <li>30-day Avg Volume &gt; {filters.volMin.toLocaleString("en-IN")}</li>
               <li><b>Sort</b>: 6-Month Price Return % DESC, top {topN}</li>
             </ul>
           </div>
