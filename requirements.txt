@@ -1,0 +1,4 @@
+# Requirements for Vercel Python serverless functions
+yfinance
+pandas
+numpy

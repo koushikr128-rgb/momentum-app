@@ -1,0 +1,12 @@
+{
+  "functions": {
+    "api/screen.py": {
+      "runtime": "@vercel/python@5.x",
+      "maxDuration": 120
+    },
+    "api/stops.py": {
+      "runtime": "@vercel/python@5.x",
+      "maxDuration": 60
+    }
+  }
+}
