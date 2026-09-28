@@ -253,31 +253,35 @@ def cmd_screen(top_n: int = 10, filters: dict | None = None):
                    and m["avgVolume30d"] > vol_min
                    and m["ret6mPct"] is not None]
 
-    # Fetch market cap + sector in PARALLEL (was sequential — saved ~30s on 36 stocks)
-    def fetch_info(m):
+    # Fetch market cap + sector via yfinance .info (sequential with small delay to avoid rate limits)
+    # Was parallel with 8 workers — caused Yahoo 429 rate-limit errors.
+    # Sequential is slower but reliable. ~0.5s per stock × 36 stocks = ~18s total.
+    import time as _time
+
+    out = []
+    for i, m in enumerate(passed_tech):
         try:
             t = yf.Ticker(f"{m['symbol']}.NS")
             info = t.info or {}
             mc = info.get("marketCap")
             if mc is None:
-                return None
-            return {
+                continue
+            long_name = info.get("longName") or info.get("shortName") or m["symbol"]
+            out.append({
                 **m,
-                "longName": info.get("longName") or info.get("shortName") or m["symbol"],
+                "longName": long_name,
                 "sector": info.get("sector") or "—",
                 "industry": info.get("industry") or "—",
                 "marketCapCr": float(mc) / 1e7,
-            }
+            })
+            # Small delay every 10 stocks to avoid rate limits
+            if i > 0 and i % 10 == 0:
+                _time.sleep(0.3)
         except Exception:
-            return None
+            continue
 
-    out = []
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(fetch_info, m): m for m in passed_tech}
-        for future in as_completed(futures):
-            result = future.result()
-            if result is not None and result["marketCapCr"] > mcap_min_cr:
-                out.append(result)
+    # Filter by market cap
+    out = [s for s in out if s["marketCapCr"] > mcap_min_cr]
     out.sort(key=lambda x: x["ret6mPct"], reverse=True)
     out = out[:top_n]
     for i, s in enumerate(out):
