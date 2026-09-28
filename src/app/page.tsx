@@ -17,7 +17,11 @@ import { toast } from "@/hooks/use-toast";
 import {
   Activity, ArrowDown, ArrowUp, RefreshCw, AlertTriangle,
   ShieldAlert, TrendingUp, TrendingDown, Gauge, Wallet, Target, Zap, Timer, Clock,
+  Bell, BellRing, History, GitCompare,
 } from "lucide-react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
+} from "recharts";
 
 import { ScreenedStock, AllocationStock, StopLossStock, StressScenario } from "@/lib/indicators";
 
@@ -55,6 +59,47 @@ type StressResponse = {
   worstLoss: number;
 };
 
+type BacktestSummary = {
+  backtest_period: string;
+  rebalances: number;
+  initial_capital: number;
+  final_strategy: number;
+  final_benchmark: number;
+  total_strategy_ret_pct: number;
+  total_benchmark_ret_pct: number;
+  cagr_strategy_pct: number;
+  cagr_benchmark_pct: number;
+  max_drawdown_pct: number;
+  sharpe: number;
+  win_rate_pct: number;
+  winners: number;
+  losers: number;
+  avg_winner_pct: number;
+  avg_loser_pct: number;
+  excess_return_pct: number;
+};
+
+type BacktestResponse = {
+  equity_curve: Array<{ date: string; strategy: number; benchmark: number }>;
+  monthly_returns: Array<{ month: string; strategy_ret: number; benchmark_ret: number }>;
+  summary: BacktestSummary | null;
+  picks_history: Array<{ date: string; picks: string[]; strategy_ret: number; benchmark_ret: number }>;
+  run_at: string;
+  elapsedMs?: number;
+  cached?: boolean;
+  error?: string;
+};
+
+type CorrelationResponse = {
+  matrix: (string | number)[][];
+  symbols: string[];
+  effectiveBets: number;
+  avgCorrelation: number;
+  highCorrelationPairs: Array<{ a: string; b: string; rho: number }>;
+  nDataPoints: number;
+  error?: string;
+};
+
 const fmt = (n: number, d = 2) =>
   isNaN(n) || n === null ? "—" : n.toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d });
 const fmtINR = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
@@ -85,6 +130,24 @@ export default function Home() {
   const [nextRunAt, setNextRunAt] = useState<number | null>(null);
   const [countdown, setCountdown] = useState<string>("");
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Backtest state
+  const [backtest, setBacktest] = useState<BacktestResponse | null>(null);
+  const [backtestRunning, setBacktestRunning] = useState(false);
+
+  // Correlation state
+  const [correlation, setCorrelation] = useState<CorrelationResponse | null>(null);
+  const [correlationRunning, setCorrelationRunning] = useState(false);
+
+  // Push notification state
+  // Initialize as "loading" — replaced with real value on client mount via useEffect.
+  // This avoids SSR hydration mismatch because Notification doesn't exist server-side.
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported" | "loading">("loading");
+  const lastAlertedRef = useRef<string>("");  // hash of last alerted symbols to avoid spamming
+
+  useEffect(() => {
+    setNotifPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
+  }, []);
 
   const runScreen = useCallback(async (silent = false) => {
     if (!silent) setRunning("screen");
@@ -189,15 +252,116 @@ export default function Home() {
     const newAlloc = await runAllocation(true);
     if (newAlloc) {
       // re-run stops + stress using the new allocation
-      await runStopsWith(newAlloc, true);
+      const stopsData = await runStopsWith(newAlloc, true);
       await runStressWith(newAlloc, true);
+      // Re-run correlation if user had it open
+      if (correlation) {
+        await runCorrelationWith(newAlloc);
+      }
+      // Fire push notifications if any EXIT/WATCH holdings
+      if (stopsData) {
+        fireNotificationsIfAlert(stopsData);
+      }
     }
     setNextRunAt(Date.now() + autoRefreshMin * 60 * 1000);
     toast({
       title: "Auto-refresh complete",
       description: `Next refresh in ${autoRefreshMin} min · ${new Date(Date.now() + autoRefreshMin * 60 * 1000).toLocaleTimeString("en-IN")}`,
     });
-  }, [runScreen, runAllocation, autoRefreshMin]);
+  }, [runScreen, runAllocation, autoRefreshMin, correlation]);
+
+  // ---------- Backtest ----------
+  const runBacktest = useCallback(async () => {
+    setBacktestRunning(true);
+    try {
+      const res = await fetch("/api/backtest", { cache: "no-store" });
+      if (!res.ok) throw new Error(`Backtest failed (${res.status})`);
+      const data: BacktestResponse = await res.json();
+      setBacktest(data);
+      if (data.summary) {
+        toast({
+          title: "Backtest complete",
+          description: `CAGR ${data.summary.cagr_strategy_pct}% vs Nifty ${data.summary.cagr_benchmark_pct}% · Sharpe ${data.summary.sharpe}`,
+        });
+      } else if (data.error) {
+        toast({ title: "Backtest failed", description: data.error, variant: "destructive" });
+      }
+    } catch (e) {
+      toast({ title: "Backtest failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+    } finally {
+      setBacktestRunning(false);
+    }
+  }, []);
+
+  // ---------- Correlation ----------
+  const runCorrelationWith = useCallback(async (allocArg: AllocateResponse) => {
+    setCorrelationRunning(true);
+    try {
+      const res = await fetch("/api/correlation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allocation: allocArg.allocation }),
+      });
+      if (!res.ok) throw new Error("Correlation failed");
+      const data: CorrelationResponse = await res.json();
+      setCorrelation(data);
+      return data;
+    } catch {
+      return null;
+    } finally {
+      setCorrelationRunning(false);
+    }
+  }, []);
+
+  const runCorrelation = useCallback(async () => {
+    if (!alloc) return;
+    const data = await runCorrelationWith(alloc);
+    if (data && !data.error) {
+      toast({
+        title: "Correlation computed",
+        description: `${data.symbols.length} stocks · Effective bets: ${data.effectiveBets} · Avg ρ: ${data.avgCorrelation.toFixed(2)}`,
+      });
+    } else if (data?.error) {
+      toast({ title: "Correlation failed", description: data.error, variant: "destructive" });
+    }
+  }, [alloc, runCorrelationWith]);
+
+  // ---------- Push notifications ----------
+  const requestNotifPermission = useCallback(async () => {
+    if (typeof Notification === "undefined") {
+      toast({ title: "Not supported", description: "Your browser doesn't support notifications", variant: "destructive" });
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    setNotifPermission(perm);
+    if (perm === "granted") {
+      toast({ title: "Notifications enabled", description: "You'll be pinged when any holding hits EXIT or WATCH status" });
+      new Notification("Nifty Momentum Tracker", {
+        body: "✅ Notifications enabled. We'll alert you when holdings need attention.",
+      });
+    } else {
+      toast({ title: "Permission denied", description: "Enable notifications in browser settings to receive alerts", variant: "destructive" });
+    }
+  }, []);
+
+  const fireNotificationsIfAlert = useCallback((stopsData: StopsResponse) => {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+    const alerts = stopsData.stops.filter((s) => s.status === "EXIT" || s.status === "WATCH");
+    if (alerts.length === 0) return;
+    // Build hash to dedupe (don't fire same alert twice in a row)
+    const hash = alerts.map((a) => `${a.symbol}:${a.status}`).sort().join("|");
+    if (hash === lastAlertedRef.current) return;
+    lastAlertedRef.current = hash;
+    const exitCount = alerts.filter((a) => a.status === "EXIT").length;
+    const watchCount = alerts.filter((a) => a.status === "WATCH").length;
+    const title = exitCount > 0 ? `🚨 ${exitCount} EXIT signal${exitCount > 1 ? "s" : ""}` : `⚠ ${watchCount} stock${watchCount > 1 ? "s" : ""} on WATCH`;
+    const body = alerts
+      .slice(0, 5)
+      .map((a) => `${a.symbol}: ${a.status} (${a.pnlPct > 0 ? "+" : ""}${a.pnlPct.toFixed(1)}% — ${a.reasons || "healthy"})`)
+      .join("\n");
+    new Notification(title, { body, tag: "nifty-alert", requireInteraction: exitCount > 0 });
+  }, []);
 
   // Helpers that accept an explicit allocation (used by auto-refresh chain)
   const runStopsWith = useCallback(async (allocArg: AllocateResponse, silent = false) => {
@@ -318,6 +482,20 @@ export default function Home() {
                 <Clock className="w-3 h-3 mr-1" /> Next: {countdown}
               </Badge>
             )}
+            <Button
+              variant={notifPermission === "granted" ? "default" : "outline"}
+              size="sm"
+              onClick={requestNotifPermission}
+              // Disable ONLY when we know for sure it's granted/unsupported/denied —
+              // initial "loading" state keeps the button enabled (matches SSR render where Notification is undefined)
+              disabled={notifPermission === "granted" || notifPermission === "unsupported" || notifPermission === "denied"}
+              suppressHydrationWarning
+            >
+              {notifPermission === "granted" ? <BellRing className="w-4 h-4 mr-2" /> : <Bell className="w-4 h-4 mr-2" />}
+              <span suppressHydrationWarning>
+                {notifPermission === "granted" ? "Alerts on" : notifPermission === "denied" ? "Blocked" : notifPermission === "unsupported" ? "N/A" : "Alerts"}
+              </span>
+            </Button>
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant={autoRefreshOn ? "default" : "outline"} size="sm">
@@ -364,11 +542,13 @@ export default function Home() {
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         <Tabs value={tab} onValueChange={setTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 mb-6">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 mb-6">
             <TabsTrigger value="screen" className="gap-2"><Target className="w-4 h-4" /> Screen</TabsTrigger>
             <TabsTrigger value="alloc" className="gap-2"><Wallet className="w-4 h-4" /> Allocation</TabsTrigger>
             <TabsTrigger value="stops" className="gap-2"><ShieldAlert className="w-4 h-4" /> Stop-Loss</TabsTrigger>
             <TabsTrigger value="stress" className="gap-2"><Zap className="w-4 h-4" /> Stress Test</TabsTrigger>
+            <TabsTrigger value="backtest" className="gap-2"><History className="w-4 h-4" /> Backtest</TabsTrigger>
+            <TabsTrigger value="risk" className="gap-2"><GitCompare className="w-4 h-4" /> Risk</TabsTrigger>
           </TabsList>
 
           {/* ============================== Screen tab ============================== */}
@@ -398,6 +578,22 @@ export default function Home() {
           {/* ============================== Stress tab ============================== */}
           <TabsContent value="stress">
             <StressPanel stress={stress} onRun={runStress} hasAlloc={!!alloc} onGoToAlloc={() => setTab("alloc")} />
+          </TabsContent>
+
+          {/* ============================== Backtest tab ============================== */}
+          <TabsContent value="backtest">
+            <BacktestPanel backtest={backtest} running={backtestRunning} onRun={runBacktest} />
+          </TabsContent>
+
+          {/* ============================== Risk tab ============================== */}
+          <TabsContent value="risk">
+            <RiskPanel
+              correlation={correlation}
+              running={correlationRunning}
+              onRun={runCorrelation}
+              hasAlloc={!!alloc}
+              onGoToAlloc={() => setTab("alloc")}
+            />
           </TabsContent>
         </Tabs>
       </main>
@@ -924,4 +1120,363 @@ function StatusBadge({ status }: { status: "HOLD" | "WATCH" | "EXIT" }) {
     EXIT: "bg-red-100 text-red-700 border-red-200",
   };
   return <span className={`inline-flex items-center px-2.5 py-1 rounded text-xs font-bold border ${map[status]}`}>{status}</span>;
+}
+
+/* ---------------------------------------------------------------- BacktestPanel */
+function BacktestPanel({ backtest, running, onRun }: {
+  backtest: BacktestResponse | null;
+  running: boolean;
+  onRun: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Strategy Backtest — 2 Years</CardTitle>
+            <CardDescription>
+              Monthly rebalance · equal weight Top 10 · compared vs Nifty 50 benchmark
+              {backtest?.cached && " · (cached)"}
+            </CardDescription>
+          </div>
+          <Button onClick={onRun} disabled={running} size="sm">
+            <RefreshCw className={`w-4 h-4 mr-2 ${running ? "animate-spin" : ""}`} />
+            {running ? "Running…" : backtest ? "Re-run Backtest" : "Run Backtest"}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {!backtest && !running && (
+            <div className="text-sm text-slate-500 p-6 text-center">
+              Click <b>Run Backtest</b> to replay this strategy every month for the last 2 years.
+              <br />
+              <span className="text-xs">Takes ~30-60 seconds. Compares equity curve vs Nifty 50, computes CAGR, Sharpe, max drawdown, win rate.</span>
+            </div>
+          )}
+          {running && !backtest && <Skeleton className="h-96 w-full" />}
+          {backtest?.error && (
+            <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+              <b>Backtest failed:</b> {backtest.error}
+            </div>
+          )}
+          {backtest?.summary && (
+            <>
+              {/* Summary stats */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                <StatCard
+                  icon={<TrendingUp className="w-4 h-4" />}
+                  label="CAGR (Strategy)"
+                  value={`${backtest.summary.cagr_strategy_pct.toFixed(2)}%`}
+                  sub={`vs Nifty ${backtest.summary.cagr_benchmark_pct.toFixed(2)}%`}
+                  tone="emerald"
+                />
+                <StatCard
+                  icon={<Gauge className="w-4 h-4" />}
+                  label="Sharpe Ratio"
+                  value={backtest.summary.sharpe.toFixed(2)}
+                  sub="annualized"
+                />
+                <StatCard
+                  icon={<TrendingDown className="w-4 h-4" />}
+                  label="Max Drawdown"
+                  value={`${backtest.summary.max_drawdown_pct.toFixed(2)}%`}
+                  sub="peak-to-trough"
+                  tone="red"
+                />
+                <StatCard
+                  icon={<Activity className="w-4 h-4" />}
+                  label="Win Rate"
+                  value={`${backtest.summary.win_rate_pct.toFixed(1)}%`}
+                  sub={`${backtest.summary.winners}W / ${backtest.summary.losers}L`}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                <StatCard
+                  icon={<ArrowUp className="w-4 h-4" />}
+                  label="Avg Winner"
+                  value={`+${backtest.summary.avg_winner_pct.toFixed(2)}%`}
+                  sub="per pick"
+                  tone="emerald"
+                />
+                <StatCard
+                  icon={<ArrowDown className="w-4 h-4" />}
+                  label="Avg Loser"
+                  value={`${backtest.summary.avg_loser_pct.toFixed(2)}%`}
+                  sub="per pick"
+                  tone="red"
+                />
+                <StatCard
+                  icon={<TrendingUp className="w-4 h-4" />}
+                  label="Total Return"
+                  value={`+${backtest.summary.total_strategy_ret_pct.toFixed(2)}%`}
+                  sub={`vs Nifty ${backtest.summary.total_benchmark_ret_pct.toFixed(2)}%`}
+                  tone="emerald"
+                />
+                <StatCard
+                  icon={<Zap className="w-4 h-4" />}
+                  label="Excess Return"
+                  value={`+${backtest.summary.excess_return_pct.toFixed(2)}%`}
+                  sub="alpha vs Nifty"
+                  tone="emerald"
+                />
+              </div>
+
+              {/* Equity curve chart */}
+              <Card className="mb-6">
+                <CardHeader>
+                  <CardTitle className="text-base">Equity Curve — ₹100 invested 2 years ago</CardTitle>
+                  <CardDescription>
+                    Strategy (Top 10 momentum, monthly rebalance) vs Nifty 50 buy-and-hold
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-80 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={backtest.equity_curve}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(d) => d.slice(0, 7)} />
+                        <YAxis tick={{ fontSize: 11 }} domain={["auto", "auto"]} />
+                        <Tooltip
+                          contentStyle={{ fontSize: 12, padding: 8 }}
+                          formatter={(v: number, name: string) => [`₹${v.toFixed(2)}`, name === "strategy" ? "Strategy" : "Nifty 50"]}
+                        />
+                        <ReferenceLine y={100} stroke="#94a3b8" strokeDasharray="4 4" label={{ value: "₹100 start", fontSize: 10, position: "insideTopLeft" }} />
+                        <Line type="monotone" dataKey="strategy" stroke="#059669" strokeWidth={2.5} dot={false} name="Strategy" />
+                        <Line type="monotone" dataKey="benchmark" stroke="#64748b" strokeWidth={1.5} strokeDasharray="4 4" dot={false} name="Nifty 50" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Monthly returns table */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Monthly Returns — Last 12 Months</CardTitle>
+                  <CardDescription>Strategy return vs Nifty 50 per rebalance period</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Month</TableHead>
+                        <TableHead className="text-right">Strategy %</TableHead>
+                        <TableHead className="text-right">Nifty 50 %</TableHead>
+                        <TableHead className="text-right">Excess %</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {backtest.monthly_returns.map((m, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="font-medium">{m.month}</TableCell>
+                          <TableCell className="text-right tabular-nums"><ReturnCell pct={m.strategy_ret} /></TableCell>
+                          <TableCell className="text-right tabular-nums"><ReturnCell pct={m.benchmark_ret} /></TableCell>
+                          <TableCell className="text-right tabular-nums font-semibold">
+                            <ReturnCell pct={m.strategy_ret - m.benchmark_ret} />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              {/* Last 6 rebalance picks */}
+              <Card className="mt-4">
+                <CardHeader>
+                  <CardTitle className="text-base">Recent Rebalance Picks</CardTitle>
+                  <CardDescription>Top 10 stocks selected at each of the last 6 rebalances</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {backtest.picks_history.map((p, i) => (
+                      <div key={i} className="border border-slate-200 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-medium text-sm">{p.date}</span>
+                          <div className="flex gap-3 text-xs">
+                            <span className="text-emerald-600">Strategy: {p.strategy_ret > 0 ? "+" : ""}{p.strategy_ret.toFixed(2)}%</span>
+                            <span className="text-slate-500">Nifty: {p.benchmark_ret > 0 ? "+" : ""}{p.benchmark_ret.toFixed(2)}%</span>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {p.picks.map((s) => (
+                            <span key={s} className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-xs font-medium">{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <p className="text-xs text-slate-500 mt-4">
+                Methodology: Equal-weighted Top 10 stocks passing all 6 momentum rules, rebalanced monthly over {backtest.summary.backtest_period}. {backtest.summary.rebalances} rebalances total.
+                Past performance does not guarantee future results.
+              </p>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- RiskPanel */
+function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
+  correlation: CorrelationResponse | null;
+  running: boolean;
+  onRun: () => void;
+  hasAlloc: boolean;
+  onGoToAlloc: () => void;
+}) {
+  if (!hasAlloc) {
+    return (
+      <Card><CardHeader>
+        <CardTitle>Risk Analysis</CardTitle>
+        <CardDescription>You need an allocation first. <Button variant="link" className="p-0 h-auto" onClick={onGoToAlloc}>Go to Allocation →</Button></CardDescription>
+      </CardHeader></Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle className="flex items-center gap-2"><GitCompare className="w-5 h-5 text-emerald-600" /> Correlation Matrix</CardTitle>
+            <CardDescription>
+              Pairwise correlation of daily returns · last 6 months · {correlation?.nDataPoints ?? 0} data points
+            </CardDescription>
+          </div>
+          <Button onClick={onRun} disabled={running} size="sm" variant="outline">
+            <RefreshCw className={`w-4 h-4 mr-2 ${running ? "animate-spin" : ""}`} />
+            {running ? "Computing…" : correlation ? "Refresh" : "Compute"}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {running && !correlation && <Skeleton className="h-64 w-full" />}
+          {correlation?.error && (
+            <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+              <b>Correlation failed:</b> {correlation.error}
+            </div>
+          )}
+          {correlation && !correlation.error && (
+            <>
+              {/* Top-level risk metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+                <StatCard
+                  icon={<GitCompare className="w-4 h-4" />}
+                  label="Effective Bets"
+                  value={correlation.effectiveBets.toFixed(2)}
+                  sub={`of ${correlation.symbols.length} holdings`}
+                  tone={correlation.effectiveBets < correlation.symbols.length * 0.6 ? "amber" : "emerald"}
+                />
+                <StatCard
+                  icon={<Activity className="w-4 h-4" />}
+                  label="Avg Correlation"
+                  value={correlation.avgCorrelation.toFixed(3)}
+                  sub="mean pairwise ρ"
+                  tone={correlation.avgCorrelation > 0.5 ? "red" : correlation.avgCorrelation > 0.3 ? "amber" : "emerald"}
+                />
+                <StatCard
+                  icon={<AlertTriangle className="w-4 h-4" />}
+                  label="High-ρ Pairs"
+                  value={String(correlation.highCorrelationPairs.length)}
+                  sub="|ρ| > 0.70"
+                  tone={correlation.highCorrelationPairs.length > 0 ? "amber" : "emerald"}
+                />
+              </div>
+
+              {/* Hidden concentration warning */}
+              {correlation.highCorrelationPairs.length > 0 && (
+                <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm">
+                  <div className="font-medium text-amber-800 mb-1">⚠ Hidden Concentration Detected</div>
+                  <p className="text-amber-700 mb-2">
+                    These stock pairs move together (|ρ| &gt; 0.70). Even though your sector caps are respected,
+                    you effectively have fewer independent bets than your {correlation.symbols.length} holdings suggest.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {correlation.highCorrelationPairs.map((p, i) => (
+                      <span key={i} className="px-2 py-1 bg-amber-100 text-amber-800 rounded text-xs font-medium">
+                        {p.a} ↔ {p.b} (ρ = {p.rho > 0 ? "+" : ""}{p.rho})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Correlation heatmap */}
+              <div className="overflow-x-auto">
+                <table className="border-collapse text-xs">
+                  <thead>
+                    <tr>
+                      {correlation.matrix[0].map((cell, i) => (
+                        <th key={i} className="px-1 py-1 text-slate-500 font-medium sticky left-0 bg-white">
+                          {typeof cell === "string" ? cell.slice(0, 6) : cell}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {correlation.matrix.slice(1).map((row, ri) => (
+                      <tr key={ri}>
+                        {row.map((cell, ci) => {
+                          if (ci === 0) {
+                            return (
+                              <td key={ci} className="px-2 py-1 font-medium text-slate-700 sticky left-0 bg-white">
+                                {typeof cell === "string" ? cell.slice(0, 6) : cell}
+                              </td>
+                            );
+                          }
+                          const rho = typeof cell === "number" ? cell : 0;
+                          const isDiagonal = ri === ci - 1;
+                          const bg = correlationColor(rho);
+                          const textColor = Math.abs(rho) > 0.6 ? "text-white" : "text-slate-700";
+                          return (
+                            <td
+                              key={ci}
+                              className={`px-2 py-1 text-center tabular-nums ${textColor}`}
+                              style={{ backgroundColor: bg, minWidth: 36 }}
+                              title={`${row[0]} vs ${correlation.matrix[0][ci]}: ρ = ${rho.toFixed(3)}`}
+                            >
+                              {isDiagonal ? "1.00" : rho.toFixed(2)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <p className="text-xs text-slate-500 mt-4">
+                <b>Effective bets</b> = (Σw)² / Σ(wᵢ × wⱼ × ρᵢⱼ) — measures how many truly independent positions you hold.
+                Lower than your actual holding count means hidden concentration.
+                <br />
+                <b>Color scale:</b> green = low correlation (good diversification), red = high correlation (concentration risk).
+              </p>
+            </>
+          )}
+          {!correlation && !running && (
+            <div className="text-sm text-slate-500 p-6 text-center">
+              Click <b>Compute</b> to fetch 6 months of daily returns and analyze correlation.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function correlationColor(rho: number): string {
+  // Map [-1, 1] → green (low) → yellow → red (high)
+  // For diversification, we care about |rho| mostly, but high positive rho is the real risk
+  if (rho >= 0.8) return "#dc2626"; // strong red
+  if (rho >= 0.6) return "#f97316"; // orange
+  if (rho >= 0.4) return "#facc15"; // yellow
+  if (rho >= 0.2) return "#a3e635"; // light green
+  if (rho >= 0) return "#86efac";   // pale green
+  if (rho >= -0.2) return "#bfdbfe"; // pale blue (negatives = hedge, good)
+  if (rho >= -0.4) return "#60a5fa"; // blue
+  return "#3b82f6"; // strong blue (great hedge)
 }
