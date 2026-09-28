@@ -1,19 +1,16 @@
 // GET /api/screen
-// Spawns Python yfinance backend to fetch + compute indicators
-// Query params:
-//   topN     — number of stocks to return (default 10, max 50)
-//   rsiMin   — minimum RSI(14) threshold (default 50, was 55)
-//   mcapMin  — minimum market cap in ₹ Cr (default 200, was 500)
-//   volMin   — minimum 30-day avg volume (default 20000, was 50000)
-//
-// Resilience strategy:
-//   1. Fresh cache (within 30 min) → return immediately
-//   2. Stale cache (older than 30 min) → try fresh fetch, fall back to stale if it fails
-//   3. Global "last successful" cache → any variant can fall back to this
-//   4. Never return 500 — always return 200 with whatever data we have + error field
+// Hybrid approach: tries pure TypeScript first (deploys anywhere),
+// falls back to Python yfinance if available (more reliable, uses curl_cffi).
+// This way it works both in sandbox (Python) and when deployed (TS).
+
 import { NextResponse } from "next/server";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { dedupUniverse } from "@/lib/universe";
+import { batchFetchDailyCandles } from "@/lib/yahoo";
+import { fetchBatchQuotes } from "@/lib/yahoo-batch";
+import { computeMetrics, ScreenedStock } from "@/lib/indicators";
+import { applyMarketCapFilter, applyTechnicalFilter } from "@/lib/strategy";
 
 const execFileAsync = promisify(execFile);
 export const runtime = "nodejs";
@@ -26,8 +23,6 @@ const SCRIPT = "/home/z/my-project/scripts/yfinance_backend.py";
 type CacheEntry = { data: unknown; ts: number };
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 30 * 60 * 1000;
-
-// Global fallback — most recent successful fetch (any variant)
 let lastSuccessful: CacheEntry | null = null;
 
 export async function GET(req: Request) {
@@ -42,106 +37,141 @@ export async function GET(req: Request) {
   const cached = cache.get(cacheKey);
   const cacheAge = cached ? Date.now() - cached.ts : Infinity;
 
-  // 1. Fresh cache hit — return immediately
   if (cached && cacheAge < CACHE_TTL_MS) {
     return NextResponse.json({
       ...(cached.data as object),
-      cached: true,
-      cacheAge,
+      cached: true, cacheAge,
       elapsedMs: Date.now() - start,
-      topN,
-      filters: { rsiMin, mcapMin, volMin },
+      topN, filters: { rsiMin, mcapMin, volMin },
     });
   }
 
-  // 2. Try fresh fetch (with reduced timeout to avoid user frustration)
-  try {
-    // Skip fs.access() — execFile will fail with a clear error if file is missing.
-    // The access() check was causing spurious ENOENT errors during dev server restarts.
-    const filtersJson = JSON.stringify({ rsi_min: rsiMin, mcap_min_cr: mcapMin, vol_min: volMin });
-    const { stdout, stderr } = await execFileAsync(
-      PYTHON,
-      [SCRIPT, "screen", String(topN), filtersJson],
-      { timeout: 90_000, maxBuffer: 50 * 1024 * 1024 }
-    );
-    void stderr;
-    const lastLine = stdout.trim().split("\n").pop() as string;
-    if (!lastLine) throw new Error("Python script returned no output");
-    const data = JSON.parse(lastLine);
+  // Try pure TypeScript first
+  let result = await tryTsScreen(topN, rsiMin, mcapMin, volMin, start);
 
-    // If Python returned an error field but no stocks, treat as failure → fall back to cache
-    if (data.error && (!data.top10 || data.top10.length === 0)) {
-      throw new Error(data.error);
-    }
+  // If TS failed (rate-limited), try Python backend
+  if (!result || (result as Record<string, unknown>).top10?.length === 0) {
+    result = await tryPythonScreen(topN, rsiMin, mcapMin, volMin, start);
+  }
 
-    const enriched = {
-      ...data,
-      elapsedMs: Date.now() - start,
-      cached: false,
-      topN,
-      filters: { rsiMin, mcapMin, volMin },
-    };
-    cache.set(cacheKey, { data: enriched, ts: Date.now() });
-    lastSuccessful = { data: enriched, ts: Date.now() };
-    return NextResponse.json(enriched);
-  } catch (e) {
-    const errMsg = e instanceof Error ? e.message : "Backend fetch failed";
-    const isEnoent = errMsg.includes("ENOENT") || errMsg.includes("no such file");
-
-    // 3. Fresh fetch failed — fall back to stale cache (even if expired)
+  // If both failed, fall back to cache
+  if (!result || ((result as Record<string, unknown>).top10 as unknown[])?.length === 0) {
     if (cached) {
       return NextResponse.json({
         ...(cached.data as object),
-        cached: true,
-        stale: true,
-        cacheAge,
+        cached: true, stale: true, cacheAge,
         elapsedMs: Date.now() - start,
-        topN,
-        filters: { rsiMin, mcapMin, volMin },
-        warning: isEnoent
-          ? "Backend script temporarily unavailable (dev server restarting). Showing cached data."
-          : "Yahoo Finance rate-limited or timed out. Showing cached data from earlier.",
+        topN, filters: { rsiMin, mcapMin, volMin },
+        warning: "Yahoo Finance rate-limited. Showing cached data.",
       });
     }
-    // 4. No cache for this variant — try global last successful (different topN/filters)
     if (lastSuccessful) {
       const lsData = lastSuccessful.data as Record<string, unknown>;
-      const lsTopN = (lsData.topN as number) || 10;
-      const lsStocks = (lsData.top10 as unknown[]) || [];
-      const sliced = lsStocks.slice(0, topN);
+      const sliced = (lsData.top10 as unknown[]).slice(0, topN);
       return NextResponse.json({
-        ...lsData,
-        top10: sliced,
-        topN,
-        cached: true,
-        stale: true,
-        fallback: true,
+        ...lsData, top10: sliced, topN,
+        cached: true, stale: true, fallback: true,
         cacheAge: Date.now() - lastSuccessful.ts,
         elapsedMs: Date.now() - start,
         filters: { rsiMin, mcapMin, volMin },
-        warning: isEnoent
-          ? `Backend script temporarily unavailable. Showing data from a previous successful fetch (Top ${lsTopN}, sliced to ${topN}).`
-          : `Yahoo Finance rate-limited. Showing data from a previous successful fetch (Top ${lsTopN}, sliced to ${topN}).`,
+        warning: "Yahoo Finance rate-limited. Showing fallback data.",
       });
     }
-    // 5. Truly no data — return empty 200 with error field (not 500, so UI doesn't crash)
     return NextResponse.json({
-      error: isEnoent
-        ? "Backend script is starting up. Please wait a few seconds and try again."
-        : errMsg,
-      warning: isEnoent
-        ? "The Python backend is temporarily unavailable. Please retry in a few seconds."
-        : "Yahoo Finance is rate-limiting requests. Please wait a few minutes and try again.",
-      universeSize: 0,
-      passedData: 0,
-      passedTech: 0,
-      passedMc: 0,
-      top10: [],
+      error: "Yahoo Finance rate-limited. Please try again later.",
+      universeSize: 0, passedData: 0, passedTech: 0, passedMc: 0, top10: [],
+      runAt: new Date().toISOString(),
+      elapsedMs: Date.now() - start, cached: false,
+      topN, filters: { rsiMin, mcapMin, volMin },
+    });
+  }
+
+  // Success — cache it
+  cache.set(cacheKey, { data: result, ts: Date.now() });
+  lastSuccessful = { data: result, ts: Date.now() };
+  return NextResponse.json(result);
+}
+
+async function tryTsScreen(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
+  try {
+    const universe = dedupUniverse;
+    const dataMap = await batchFetchDailyCandles(universe, "1y", 3);
+    if (dataMap.size === 0) return null;
+
+    const metricsList = [];
+    for (const sym of universe) {
+      const data = dataMap.get(sym);
+      if (!data) continue;
+      const m = computeMetrics(sym, data.candles);
+      if (m) metricsList.push(m);
+    }
+
+    const techPassed = metricsList.filter((m) =>
+      applyTechnicalFilter(m) && m.rsi14 > rsiMin && m.avgVolume30d > volMin
+    );
+    if (techPassed.length === 0) return null;
+
+    const techSymbols = techPassed.map((m) => m.symbol);
+    const quoteMap = await fetchBatchQuotes(techSymbols);
+
+    const screened: ScreenedStock[] = [];
+    for (const m of techPassed) {
+      const q = quoteMap.get(m.symbol);
+      if (!q?.marketCap) continue;
+      const marketCapCr = q.marketCap / 1e7;
+      if (marketCapCr <= mcapMin) continue;
+      screened.push({
+        ...m,
+        longName: (q.longName && q.longName !== "N/A") ? q.longName : (q.shortName || m.symbol),
+        sector: "—",
+        industry: "—",
+        marketCapCr,
+        rank: 0,
+      });
+    }
+
+    screened.sort((a, b) => b.ret6mPct - a.ret6mPct);
+    const top10 = screened.slice(0, topN).map((s, i) => ({ ...s, rank: i + 1 }));
+
+    return {
+      universeSize: universe.length,
+      passedData: metricsList.length,
+      passedTech: techPassed.length,
+      passedMc: screened.length,
+      top10,
       runAt: new Date().toISOString(),
       elapsedMs: Date.now() - start,
       cached: false,
       topN,
       filters: { rsiMin, mcapMin, volMin },
-    });
+      backend: "typescript",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function tryPythonScreen(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
+  try {
+    const filtersJson = JSON.stringify({ rsi_min: rsiMin, mcap_min_cr: mcapMin, vol_min: volMin });
+    const { stdout } = await execFileAsync(
+      PYTHON,
+      [SCRIPT, "screen", String(topN), filtersJson],
+      { timeout: 90_000, maxBuffer: 50 * 1024 * 1024 }
+    );
+    const lastLine = stdout.trim().split("\n").pop();
+    if (!lastLine) return null;
+    const data = JSON.parse(lastLine);
+    if (data.error && (!data.top10 || data.top10.length === 0)) return null;
+    return {
+      ...data,
+      elapsedMs: Date.now() - start,
+      cached: false,
+      topN,
+      filters: { rsiMin, mcapMin, volMin },
+      backend: "python",
+    };
+  } catch {
+    return null;
   }
 }

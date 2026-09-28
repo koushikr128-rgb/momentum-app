@@ -2,8 +2,7 @@
 // Uses the v7/quote endpoint with crumb authentication.
 // Schema validated with Zod per the ScreenerQuoteSchema provided by the user.
 //
-// This replaces the per-stock `.info` calls that were causing Yahoo rate-limits.
-// 30 stocks = 1 batch call instead of 30 individual calls.
+// This replaces the Python yfinance backend — pure TypeScript, deploys anywhere.
 
 import { z } from "zod";
 
@@ -100,17 +99,17 @@ export const ScreenerQuotesSchema = z.array(ScreenerQuoteSchema);
 export type ScreenerQuote = z.infer<typeof ScreenerQuoteSchema>;
 export type ScreenerQuotes = z.infer<typeof ScreenerQuotesSchema>;
 
-const YF_BASE = "https://query1.finance.yahoo.com";
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 
 // Crumb cache — fetched once per session, reused for all batch calls
 let cachedCrumb: { crumb: string; cookie: string; fetchedAt: number } | null = null;
-const CRUMB_TTL_MS = 30 * 60 * 1000; // 30 min
+const CRUMB_TTL_MS = 30 * 60 * 1000;
 
 /**
- * Fetch a crumb + cookie from Yahoo.
- * Required for the v7/quote endpoint.
+ * Fetch a crumb + cookie from Yahoo Finance.
+ * Key: must visit fc.yahoo.com (NOT www.yahoo.com) with redirect: "manual"
+ * to get the A3/A1 session cookies needed for the crumb endpoint.
  * Caches the result for 30 minutes.
  */
 async function fetchCrumb(): Promise<{ crumb: string; cookie: string }> {
@@ -118,34 +117,39 @@ async function fetchCrumb(): Promise<{ crumb: string; cookie: string }> {
     return { crumb: cachedCrumb.crumb, cookie: cachedCrumb.cookie };
   }
 
-  // Step 1: Visit Yahoo homepage to get cookies
-  const homeRes = await fetch("https://www.yahoo.com/", {
+  // Step 1: Visit fc.yahoo.com to get session cookies (returns 404 but sets cookies)
+  const homeRes = await fetch("https://fc.yahoo.com", {
     headers: { "User-Agent": USER_AGENT },
+    redirect: "manual",
     cache: "no-store",
   });
-  const setCookie = homeRes.headers.get("set-cookie") || "";
+  const cookie = homeRes.headers.get("set-cookie") || "";
 
-  // Step 2: Get crumb
-  const crumbRes = await fetch(`${YF_BASE}/v1/test/getcrumb`, {
+  if (!cookie) {
+    throw new Error("No cookies received from Yahoo");
+  }
+
+  // Step 2: Get crumb using the cookies
+  const crumbRes = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb", {
     headers: {
       "User-Agent": USER_AGENT,
-      Cookie: setCookie,
+      Cookie: cookie,
     },
     cache: "no-store",
   });
   const crumb = (await crumbRes.text()).trim();
 
-  if (!crumb || crumb.includes("error")) {
-    throw new Error("Failed to fetch Yahoo crumb");
+  if (!crumb || crumb.startsWith("{")) {
+    throw new Error("Failed to fetch Yahoo crumb: " + crumb.slice(0, 100));
   }
 
-  cachedCrumb = { crumb, cookie: setCookie, fetchedAt: Date.now() };
-  return { crumb, cookie: setCookie };
+  cachedCrumb = { crumb, cookie, fetchedAt: Date.now() };
+  return { crumb, cookie };
 }
 
 /**
  * Fetch quotes for multiple symbols in ONE HTTP call.
- * Returns validated ScreenerQuote[] matching the schema.
+ * Returns a Map keyed by symbol (without .NS suffix).
  *
  * Batch size: Yahoo supports up to ~50 symbols per call.
  * If more than 50 symbols are passed, they're split into multiple batches.
@@ -157,11 +161,10 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<Map<string, S
   const { crumb, cookie } = await fetchCrumb();
   const BATCH_SIZE = 50;
 
-  // Split into batches of 50
   for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
     const batch = symbols.slice(i, i + BATCH_SIZE);
     const symbolsParam = batch.map((s) => (s.endsWith(".NS") ? s : `${s}.NS`)).join(",");
-    const url = `${YF_BASE}/v7/finance/quote?symbols=${encodeURIComponent(symbolsParam)}&crumb=${encodeURIComponent(crumb)}`;
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbolsParam)}&crumb=${encodeURIComponent(crumb)}`;
 
     try {
       const res = await fetch(url, {
@@ -173,58 +176,24 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<Map<string, S
         cache: "no-store",
       });
 
-      if (!res.ok) {
-        // If we get 401, clear crumb cache and retry once
-        if (res.status === 401 && !cachedCrumb) {
-          continue; // shouldn't happen, but skip
-        }
-        continue; // skip failed batch, partial results are better than none
-      }
+      if (!res.ok) continue;
 
       const data = await res.json();
       const quotes = data?.quoteResponse?.result || [];
 
-      // Validate with Zod — silently skip invalid entries
       for (const q of quotes) {
         try {
           const parsed = ScreenerQuoteSchema.parse(q);
-          result.set(parsed.symbol, parsed);
+          const sym = parsed.symbol.replace(".NS", "");
+          result.set(sym, parsed);
         } catch {
           // Skip invalid quotes
         }
       }
     } catch {
-      // Network error — skip this batch
       continue;
     }
   }
 
   return result;
-}
-
-/**
- * Extract market cap + sector + longName from a batch quote.
- * Note: v7/quote does NOT return sector — that needs the quoteSummary endpoint.
- * But marketCap + longName are enough for the affordability filter + display.
- */
-export function extractQuoteInfo(quote: ScreenerQuote): {
-  marketCap: number | null;
-  longName: string;
-  shortName: string;
-  fiftyTwoWeekHigh: number | null;
-  fiftyTwoWeekLow: number | null;
-  regularMarketPrice: number | null;
-  fiftyDayAverage: number | null;
-  twoHundredDayAverage: number | null;
-} {
-  return {
-    marketCap: quote.marketCap ?? null,
-    longName: quote.longName !== "N/A" ? quote.longName : (quote.shortName || quote.symbol),
-    shortName: quote.shortName || quote.symbol,
-    fiftyTwoWeekHigh: quote.fiftyTwoWeekHigh ?? null,
-    fiftyTwoWeekLow: quote.fiftyTwoWeekLow ?? null,
-    regularMarketPrice: quote.regularMarketPrice ?? null,
-    fiftyDayAverage: quote.fiftyDayAverage ?? null,
-    twoHundredDayAverage: quote.twoHundredDayAverage ?? null,
-  };
 }

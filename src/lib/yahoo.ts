@@ -52,20 +52,28 @@ const USER_AGENT =
 async function yfFetch(path: string): Promise<Response | null> {
   for (const base of [YF_BASE_PRIMARY, YF_BASE_FALLBACK]) {
     try {
-      const res = await fetch(`${base}${path}`, {
+      const url = `${base}${path}`;
+      const res = await fetch(url, {
         headers: {
           "User-Agent": USER_AGENT,
           Accept: "application/json,text/json,*/*",
           "Accept-Language": "en-US,en;q=0.9",
+          "Referer": "https://finance.yahoo.com/",
         },
         cache: "no-store",
+        // @ts-expect-error — Next.js fetch extensions
+        next: { revalidate: 0 },
       });
       if (res.ok) return res;
-      if (res.status === 404) return null; // symbol not found — don't retry fallback
-      // 429 / 5xx → small delay, try other host
+      if (res.status === 404) return null;
+      if (res.status === 429) {
+        // Rate limited — wait longer before trying fallback
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
       await new Promise((r) => setTimeout(r, 200));
-    } catch {
-      // network error → try other host
+    } catch (e) {
+      console.log(`[yfFetch] error: ${e instanceof Error ? e.message : "unknown"}`);
     }
   }
   return null;
@@ -82,14 +90,20 @@ export async function fetchDailyCandles(
   const symbol = rawSymbol.endsWith(".NS") ? rawSymbol : `${rawSymbol}.NS`;
   const path = `/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
   const res = await yfFetch(path);
+  console.log(`[fetchDailyCandles] ${symbol} range=${range} yfFetch=${res ? "ok" : "null"}`);
   if (!res) return null;
   try {
     const data = (await res.json()) as YahooChartResponse;
-    if (!data?.chart?.result?.[0]) return null;
+    console.log(`[fetchDailyCandles] ${symbol} chart.result exists: ${!!data?.chart?.result?.[0]}`);
+    if (!data?.chart?.result?.[0]) {
+      console.log(`[fetchDailyCandles] ${symbol} chart error:`, JSON.stringify(data?.chart?.error));
+      return null;
+    }
 
     const result = data.chart.result[0];
     const q = result.indicators.quote[0];
     const tsArr = result.timestamp;
+    console.log(`[fetchDailyCandles] ${symbol} tsArr.length=${tsArr?.length} quote exists: ${!!q}`);
 
     const candles: Candle[] = [];
     for (let i = 0; i < tsArr.length; i++) {
@@ -112,24 +126,35 @@ export async function fetchDailyCandles(
 }
 
 /**
- * Batch fetch with concurrency limit (default 2 — Yahoo rate-limits aggressive parallel calls).
- * Adds a small delay between requests to stay under rate limits.
+ * Batch fetch with concurrency limit + early abort on rate limiting.
+ * If we get 3 consecutive 429s, abort early (returning partial results).
  */
 export async function batchFetchDailyCandles(
   symbols: string[],
-  range = "18mo",
+  range = "1y",
   concurrency = 2
 ): Promise<Map<string, { candles: Candle[]; meta: YahooChartResponse["chart"]["result"][0]["meta"] }>> {
   const result = new Map<string, { candles: Candle[]; meta: YahooChartResponse["chart"]["result"][0]["meta"] }>();
   const queue = [...symbols];
   const workers: Promise<void>[] = [];
+  let consecutive429 = 0;
+  let aborted = false;
 
   async function worker() {
-    while (queue.length > 0) {
+    while (queue.length > 0 && !aborted) {
       const sym = queue.shift()!;
       const data = await fetchDailyCandles(sym, range);
-      if (data) result.set(sym, data);
-      // Tiny stagger between requests within a worker to avoid burst
+      if (data) {
+        result.set(sym, data);
+        consecutive429 = 0;
+      } else {
+        consecutive429++;
+        // If 5 consecutive failures, abort early (Yahoo is rate-limiting us)
+        if (consecutive429 >= 5) {
+          aborted = true;
+          break;
+        }
+      }
       await new Promise((r) => setTimeout(r, 50));
     }
   }
