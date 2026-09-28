@@ -34,6 +34,10 @@ type ScreenResponse = {
   runAt: string;
   elapsedMs: number;
   error?: string;
+  warning?: string;
+  stale?: boolean;
+  fallback?: boolean;
+  cached?: boolean;
 };
 
 type RemovedStock = {
@@ -228,7 +232,14 @@ export default function Home() {
       setScreen(data);
       setAllocDirty(true);
       if (!silent) {
-        toast({ title: "Screen complete", description: `${data.top10.length} stocks in Top ${n} — ${(data.elapsedMs / 1000).toFixed(1)}s` });
+        // Don't show toast on auto-load; show warning toast if stale/fallback
+        if (data.error) {
+          toast({ title: "Screen failed — Yahoo rate-limited", description: data.error.slice(0, 100), variant: "destructive" });
+        } else if (data.warning) {
+          toast({ title: "Showing cached data", description: data.warning.slice(0, 100) });
+        } else {
+          toast({ title: "Screen complete", description: `${data.top10.length} stocks in Top ${n} — ${(data.elapsedMs / 1000).toFixed(1)}s` });
+        }
       }
       return data;
     } catch (e) {
@@ -969,17 +980,28 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs }: { screen: Sc
   }
   return (
     <div className="space-y-4">
-      {/* Error banner if Yahoo rate-limited */}
-      {screen.error && (
-        <Card className="card-pastel border-amber-300/60 bg-amber-50/50">
+      {/* Error/warning banner — Yahoo rate-limited or showing stale/fallback data */}
+      {(screen.error || screen.warning) && (
+        <Card className={`card-pastel ${screen.error ? "border-red-300/60 bg-red-50/50" : "border-amber-300/60 bg-amber-50/50"}`}>
           <CardContent className="p-4 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${screen.error ? "text-red-600" : "text-amber-600"}`} />
             <div className="flex-1">
-              <p className="text-sm font-medium text-amber-900">Yahoo Finance rate-limited</p>
-              <p className="text-xs text-amber-700 mt-1">{screen.error}</p>
-              <p className="text-xs text-amber-600 mt-2">
-                The screen will auto-retry. You can also click "Run Screen" again in a minute.
-                Results below may be incomplete or empty.
+              <p className={`text-sm font-medium ${screen.error ? "text-red-900" : "text-amber-900"}`}>
+                {screen.error
+                  ? "Yahoo Finance rate-limited"
+                  : screen.fallback
+                    ? "Showing fallback data"
+                    : screen.stale
+                      ? "Showing cached data"
+                      : "Notice"}
+              </p>
+              <p className={`text-xs mt-1 ${screen.error ? "text-red-700" : "text-amber-700"}`}>
+                {screen.error || screen.warning}
+              </p>
+              <p className={`text-xs mt-2 ${screen.error ? "text-red-600" : "text-amber-600"}`}>
+                {screen.error
+                  ? "The screen will auto-retry. You can also click \"Run Screen\" again in a minute."
+                  : "Data below is from an earlier successful fetch. Click \"Run Screen\" to try fetching fresh data."}
               </p>
             </div>
           </CardContent>
