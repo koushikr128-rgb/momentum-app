@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,10 +10,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "@/hooks/use-toast";
 import {
   Activity, ArrowDown, ArrowUp, RefreshCw, AlertTriangle,
-  ShieldAlert, TrendingUp, TrendingDown, Gauge, Wallet, Target, Zap,
+  ShieldAlert, TrendingUp, TrendingDown, Gauge, Wallet, Target, Zap, Timer, Clock,
 } from "lucide-react";
 
 import { ScreenedStock, AllocationStock, StopLossStock, StressScenario } from "@/lib/indicators";
@@ -57,6 +60,14 @@ const fmt = (n: number, d = 2) =>
 const fmtINR = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const fmtPct = (n: number) => (isNaN(n) ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(2)}%`);
 
+const AUTO_REFRESH_OPTIONS = [
+  { value: 15, label: "15 minutes" },
+  { value: 30, label: "30 minutes" },
+  { value: 60, label: "1 hour" },
+  { value: 180, label: "3 hours" },
+  { value: 360, label: "6 hours" },
+];
+
 export default function Home() {
   const [tab, setTab] = useState("screen");
   const [running, setRunning] = useState<"screen" | "stops" | null>(null);
@@ -68,23 +79,34 @@ export default function Home() {
   const [totalInvestment, setTotalInvestment] = useState(200000);
   const [allocDirty, setAllocDirty] = useState(false);
 
-  const runScreen = useCallback(async () => {
-    setRunning("screen");
+  // Auto-refresh state
+  const [autoRefreshOn, setAutoRefreshOn] = useState(false);
+  const [autoRefreshMin, setAutoRefreshMin] = useState(60);
+  const [nextRunAt, setNextRunAt] = useState<number | null>(null);
+  const [countdown, setCountdown] = useState<string>("");
+  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const runScreen = useCallback(async (silent = false) => {
+    if (!silent) setRunning("screen");
     try {
       const res = await fetch("/api/screen", { cache: "no-store" });
       if (!res.ok) throw new Error(`Screen failed (${res.status})`);
       const data: ScreenResponse = await res.json();
       setScreen(data);
       setAllocDirty(true);
-      toast({ title: "Screen complete", description: `${data.top10.length} stocks in Top 10 — ${(data.elapsedMs / 1000).toFixed(1)}s` });
+      if (!silent) {
+        toast({ title: "Screen complete", description: `${data.top10.length} stocks in Top 10 — ${(data.elapsedMs / 1000).toFixed(1)}s` });
+      }
+      return data;
     } catch (e) {
       toast({ title: "Screen failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+      return null;
     } finally {
       setRunning(null);
     }
   }, []);
 
-  const runAllocation = useCallback(async () => {
+  const runAllocation = useCallback(async (silent = false) => {
     if (!screen) return;
     try {
       const res = await fetch("/api/allocate", {
@@ -96,15 +118,21 @@ export default function Home() {
       const data: AllocateResponse = await res.json();
       setAlloc(data);
       setAllocDirty(false);
-      toast({ title: "Allocation computed", description: fmtINR(data.totalInvested) + " across " + data.allocation.length + " stocks" });
+      if (!silent) {
+        toast({ title: "Allocation computed", description: fmtINR(data.totalInvested) + " across " + data.allocation.length + " stocks" });
+      }
+      return data;
     } catch (e) {
-      toast({ title: "Allocation failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+      if (!silent) {
+        toast({ title: "Allocation failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+      }
+      return null;
     }
   }, [screen, totalInvestment]);
 
-  const runStops = useCallback(async () => {
+  const runStops = useCallback(async (silent = false) => {
     if (!alloc) return;
-    setRunning("stops");
+    if (!silent) setRunning("stops");
     try {
       const res = await fetch("/api/stops", {
         method: "POST",
@@ -114,15 +142,21 @@ export default function Home() {
       if (!res.ok) throw new Error("Stop-loss fetch failed");
       const data: StopsResponse = await res.json();
       setStops(data);
-      toast({ title: "Stop-loss refreshed", description: `P&L ${fmtPct(data.pnlPct)} • ${data.statusCounts.HOLD} HOLD, ${data.statusCounts.WATCH} WATCH, ${data.statusCounts.EXIT} EXIT` });
+      if (!silent) {
+        toast({ title: "Stop-loss refreshed", description: `P&L ${fmtPct(data.pnlPct)} • ${data.statusCounts.HOLD} HOLD, ${data.statusCounts.WATCH} WATCH, ${data.statusCounts.EXIT} EXIT` });
+      }
+      return data;
     } catch (e) {
-      toast({ title: "Stop-loss failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+      if (!silent) {
+        toast({ title: "Stop-loss failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+      }
+      return null;
     } finally {
       setRunning(null);
     }
   }, [alloc]);
 
-  const runStress = useCallback(async () => {
+  const runStress = useCallback(async (silent = false) => {
     if (!alloc) return;
     try {
       const res = await fetch("/api/stress", {
@@ -133,11 +167,131 @@ export default function Home() {
       if (!res.ok) throw new Error("Stress test failed");
       const data: StressResponse = await res.json();
       setStress(data);
-      toast({ title: "Stress test complete", description: `Worst drawdown ${data.worstDrawdown.toFixed(2)}%` });
+      if (!silent) {
+        toast({ title: "Stress test complete", description: `Worst drawdown ${data.worstDrawdown.toFixed(2)}%` });
+      }
+      return data;
     } catch (e) {
-      toast({ title: "Stress test failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+      if (!silent) {
+        toast({ title: "Stress test failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+      }
+      return null;
     }
   }, [alloc]);
+
+  // ---------- Auto-refresh engine ----------
+  // On each tick, run screen silently. If allocation exists, re-run it. If stops exist, re-run them.
+  // If stress exists, re-run it too. Then reset the next-run timer.
+  const runAutoRefresh = useCallback(async () => {
+    const fresh = await runScreen(true);
+    if (!fresh) return;
+    // re-allocate if user already had an allocation
+    const newAlloc = await runAllocation(true);
+    if (newAlloc) {
+      // re-run stops + stress using the new allocation
+      await runStopsWith(newAlloc, true);
+      await runStressWith(newAlloc, true);
+    }
+    setNextRunAt(Date.now() + autoRefreshMin * 60 * 1000);
+    toast({
+      title: "Auto-refresh complete",
+      description: `Next refresh in ${autoRefreshMin} min · ${new Date(Date.now() + autoRefreshMin * 60 * 1000).toLocaleTimeString("en-IN")}`,
+    });
+  }, [runScreen, runAllocation, autoRefreshMin]);
+
+  // Helpers that accept an explicit allocation (used by auto-refresh chain)
+  const runStopsWith = useCallback(async (allocArg: AllocateResponse, silent = false) => {
+    setRunning("stops");
+    try {
+      const res = await fetch("/api/stops", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allocation: allocArg.allocation }),
+      });
+      if (!res.ok) throw new Error("Stop-loss fetch failed");
+      const data: StopsResponse = await res.json();
+      setStops(data);
+      return data;
+    } catch {
+      return null;
+    } finally {
+      setRunning(null);
+    }
+  }, []);
+
+  const runStressWith = useCallback(async (allocArg: AllocateResponse, silent = false) => {
+    try {
+      const res = await fetch("/api/stress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allocation: allocArg.allocation, totalInvested: allocArg.totalInvested }),
+      });
+      if (!res.ok) throw new Error("Stress test failed");
+      const data: StressResponse = await res.json();
+      setStress(data);
+      return data;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // When auto-refresh is toggled on, schedule the first run + start countdown ticker
+  useEffect(() => {
+    if (!autoRefreshOn) {
+      setNextRunAt(null);
+      setCountdown("");
+      if (tickerRef.current) {
+        clearInterval(tickerRef.current);
+        tickerRef.current = null;
+      }
+      return;
+    }
+    // Schedule first auto-run
+    setNextRunAt(Date.now() + autoRefreshMin * 60 * 1000);
+
+    // Ticker: every 1s update countdown and trigger refresh when due
+    tickerRef.current = setInterval(() => {
+      const target = Date.now() + autoRefreshMin * 60 * 1000;
+      setNextRunAt((prev) => {
+        const target = prev ?? Date.now();
+        const remaining = target - Date.now();
+        if (remaining <= 0) {
+          // trigger auto-refresh (don't await inside setInterval)
+          runAutoRefresh();
+          return Date.now() + autoRefreshMin * 60 * 1000;
+        }
+        return prev;
+      });
+    }, 1000);
+
+    return () => {
+      if (tickerRef.current) {
+        clearInterval(tickerRef.current);
+        tickerRef.current = null;
+      }
+    };
+  }, [autoRefreshOn, autoRefreshMin, runAutoRefresh]);
+
+  // Update countdown display every second
+  useEffect(() => {
+    if (!autoRefreshOn || !nextRunAt) {
+      setCountdown("");
+      return;
+    }
+    const tick = () => {
+      const remaining = nextRunAt - Date.now();
+      if (remaining <= 0) {
+        setCountdown("refreshing…");
+        return;
+      }
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      setCountdown(`${mins}m ${secs.toString().padStart(2, "0")}s`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [autoRefreshOn, nextRunAt]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
@@ -155,11 +309,51 @@ export default function Home() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
               <Activity className="w-3 h-3 mr-1" /> {screen ? `Last refresh: ${new Date(screen.runAt).toLocaleTimeString("en-IN")}` : "Not run yet"}
             </Badge>
-            <Button onClick={runScreen} disabled={running === "screen"} size="sm">
+            {autoRefreshOn && (
+              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 tabular-nums">
+                <Clock className="w-3 h-3 mr-1" /> Next: {countdown}
+              </Badge>
+            )}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant={autoRefreshOn ? "default" : "outline"} size="sm">
+                  <Timer className="w-4 h-4 mr-2" />
+                  {autoRefreshOn ? `Auto: ${autoRefreshMin}m` : "Auto-refresh"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72" align="end">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="auto-toggle" className="text-sm font-medium">Auto-refresh</Label>
+                    <Switch id="auto-toggle" checked={autoRefreshOn} onCheckedChange={setAutoRefreshOn} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-500">Interval</Label>
+                    <Select value={String(autoRefreshMin)} onValueChange={(v) => setAutoRefreshMin(Number(v))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {AUTO_REFRESH_OPTIONS.map((o) => (
+                          <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    When enabled, the dashboard will re-fetch live Top 10 stocks, re-allocate your capital, and refresh stop-loss status every {autoRefreshMin} min. Stress test also re-runs if you’ve already computed it.
+                  </p>
+                  {autoRefreshOn && nextRunAt && (
+                    <p className="text-xs text-blue-600 font-medium">
+                      Next refresh at {new Date(nextRunAt).toLocaleTimeString("en-IN")}
+                    </p>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+            <Button onClick={() => runScreen(false)} disabled={running === "screen"} size="sm">
               <RefreshCw className={`w-4 h-4 mr-2 ${running === "screen" ? "animate-spin" : ""}`} />
               {running === "screen" ? "Running…" : "Run Screen"}
             </Button>
