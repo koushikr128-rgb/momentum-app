@@ -18,10 +18,11 @@ export const maxDuration = 300;
 const PYTHON = "/home/z/.venv/bin/python3";
 const SCRIPT = "/home/z/my-project/scripts/yfinance_backend.py";
 
-// Cache keyed by composite key (topN + filter thresholds) — each variant cached for 10 min
+// Cache keyed by composite key (topN + filter thresholds) — each variant cached for 30 minutes
+// (was 10 min — increased to reduce Yahoo API calls and avoid rate limiting)
 type CacheEntry = { data: unknown; ts: number };
 const cache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 10 * 60 * 1000;
+const CACHE_TTL_MS = 30 * 60 * 1000;
 
 export async function GET(req: Request) {
   const start = Date.now();

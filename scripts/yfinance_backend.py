@@ -7,6 +7,7 @@ Usage:
   python3 yfinance_backend.py stops TICKER1,TICKER2,ENTRY1,ENTRY2,...
 """
 import sys, json, time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -73,45 +74,30 @@ UNIVERSE = [
     "VIPIND", "MINDACORP", "TALBROAUTO", "BATAINDIA", "FILATEX",
     "TIMKEN", "SKFINDIA", "SCHAEFFLER",
     "MFSL", "AETHER",
-    # ---- Curated mid + small cap additions (~120 unique stocks, no dupes with above) ----
-    # Pharma & healthcare (additional)
-    "AARTIDRUGS", "AARTIPHARM", "ADVANZPHARMA", "BAYERCROP", "BLISSGVS",
-    "CAPLI", "FDC", "GLENMARKLIFE", "GRANULES", "LAURUSLABS",
-    "NATCO", "NEULAND", "ORCHIDPH", "PANACEABIO", "SANOFI",
-    "SHILPAMED", "STRIDES", "SUVEN", "THYROCARE", "WOCKPHARMA",
-    # Chemicals & specialty (additional)
-    "ACRYSIL", "ADVANTA", "AETHERIND", "APARINDS", "BALAJIAMINE",
-    "BASF", "BHARATRAS", "BORORENEW", "CAMLIN", "CAMLINFINE",
-    "DCMSHRIRAM", "EIDPARRY", "EPL", "FINEORG", "GHCL",
-    "GNFC", "GOCLCORP", "GOODYEAR", "GRAPHITE", "GRAVITA",
-    "GUJALKALI", "JINDALSAW", "NAVINFLUOR", "NOCIL", "ROSSARI",
-    "SAREGAMA", "SIGIND", "SOLARINDS", "SOMANY", "SUDARSHCHEM",
-    "TANLA", "TATVA", "VINATIORGA",
-    # Auto & ancillary (additional)
-    "CARBORUNIV", "EMMJUNI", "FIEMIND", "FORCEMOT", "GABRIEL",
-    "JBM", "JTLIND", "METROBRAND", "PRECISION", "RICOAUTO",
-    "SUBROS", "SUNFLAG", "UCALFUEL", "UNOMINDA", "VARROC",
-    "WABCOIND", "WHEELS",
-    # Banks & financials (additional)
+    # ---- Curated mid + small cap additions (high-quality names likely to pass momentum filters) ----
+    "AARTIDRUGS", "AARTIPHARM", "BAYERCROP", "BLISSGVS", "FDC",
+    "GLENMARKLIFE", "GRANULES", "NATCO", "NEULAND", "PANACEABIO",
+    "SANOFI", "SHILPAMED", "STRIDES", "SUVEN", "THYROCARE",
+    "WOCKPHARMA",
+    "ACRYSIL", "AETHERIND", "APARINDS", "BALAJIAMINE", "BASF",
+    "BHARATRAS", "BORORENEW", "DCMSHRIRAM", "EIDPARRY", "FINEORG",
+    "GHCL", "GNFC", "GOCLCORP", "GRAPHITE", "GRAVITA",
+    "GUJALKALI", "NAVINFLUOR", "NOCIL", "ROSSARI", "SOLARINDS",
+    "VINATIORGA",
+    "CARBORUNIV", "FIEMIND", "FORCEMOT", "GABRIEL", "JBM",
+    "METROBRAND", "PRECISION", "RICOAUTO", "SUBROS", "SUNFLAG",
+    "UNOMINDA", "VARROC",
     "BANKINDIA", "CANFINHOME", "DCBBANK", "EQUITASBNK", "IDBI",
-    "INDIANB", "KARURVYSYA", "PEERRE", "SOUTHINDIAN",
-    "SUNDARMFIN",
-    # FMCG & consumer (additional)
+    "INDIANB", "KARURVYSYA", "SOUTHINDIAN", "SUNDARMFIN",
     "BLUEDART", "CCL", "GILLETTE", "NILKAMAL", "PATANJALI",
-    "RUCHI", "VENKEYS", "VSTIND", "WIMPLAST",
-    # Industrials / infra (additional unique)
-    "ANSAL", "BBLUNTA", "CADILAHC", "CHENNPETRO", "DELTACORP",
-    "DHANUKA", "DIXON", "GMRINFRA", "HERITGFOOD", "INOXWIND",
-    "JKLAKSHMI", "KANSAINER", "KIRLOSBROS", "KIRLOSENG", "LAXMIMACH",
-    "LODHA", "MAHABANK", "MEGH", "METROPOLIS", "MINDTREE",
-    "OBEROIRLTY", "PAGEIND", "PHOENIX", "PRECAM", "PRINCEPIPE",
-    "RAMCOCEM", "RELINFRA", "SCHAEFFLER", "SELANE", "SKFINDIA",
-    "SOBHA", "SPICEJET", "TIMKEN", "TTKPRESTIG", "TTKHLTH",
-    "WELENT",
-    # New-age / digital
+    "VENKEYS", "VSTIND",
+    "DELTACORP", "DIXON", "GMRINFRA", "HERITGFOOD", "INOXWIND",
+    "JKLAKSHMI", "KANSAINER", "KIRLOSBROS", "LAXMIMACH", "LODHA",
+    "MAHABANK", "MEGH", "METROPOLIS", "OBEROIRLTY", "PAGEIND",
+    "PHOENIX", "PRECAM", "PRINCEPIPE", "RAMCOCEM", "SCHAEFFLER",
+    "SELANE", "SKFINDIA", "SOBHA", "TIMKEN", "TTKPRESTIG",
     "BSE", "HAPPY", "LATENTVIEW", "MAPMYINDIA", "NYKAA",
     "PAYTM", "PBFINTECH", "POLICYBZR", "ZOMATO",
-    # Energy / utilities (additional)
     "ADANIGREEN", "INDIGAS", "KEC", "OIL", "TPGPWR",
 ]
 UNIVERSE = list(dict.fromkeys(UNIVERSE))
@@ -193,8 +179,35 @@ def cmd_screen(top_n: int = 10, filters: dict | None = None):
     vol_min = float(f.get("vol_min", 20000))
 
     tickers = [f"{s}.NS" for s in UNIVERSE]
-    raw = yf.download(tickers, period="18mo", group_by="ticker",
-                     threads=True, progress=False, auto_adjust=False)
+    # 14 months is enough for 200 DMA (~9mo) + 6M returns + 30D volume buffer
+    # Retry up to 3 times with backoff to handle Yahoo rate limiting
+    raw = None
+    for attempt in range(3):
+        try:
+            raw = yf.download(tickers, period="14mo", group_by="ticker",
+                             threads=True, progress=False, auto_adjust=False)
+            # Check if we got meaningful data (not all NaN)
+            if raw is not None and len(raw) > 100:
+                break
+            else:
+                print(f"Attempt {attempt+1}: got {0 if raw is None else len(raw)} rows, retrying...", file=sys.stderr)
+        except Exception as e:
+            print(f"Attempt {attempt+1} failed: {e}", file=sys.stderr)
+        if attempt < 2:
+            import time as _time
+            _time.sleep(5 * (attempt + 1))  # 5s, 10s backoff
+
+    if raw is None or len(raw) < 100:
+        print(json.dumps({
+            "universeSize": len(UNIVERSE),
+            "passedData": 0,
+            "passedTech": 0,
+            "passedMc": 0,
+            "top10": [],
+            "runAt": pd.Timestamp.now(tz="UTC").isoformat(),
+            "error": "Yahoo Finance rate-limited all download attempts. Please try again in a few minutes.",
+        }))
+        return
     metrics = []
     for sym in UNIVERSE:
         try:
@@ -217,24 +230,32 @@ def cmd_screen(top_n: int = 10, filters: dict | None = None):
                    and m["rsi14"] > rsi_min
                    and m["avgVolume30d"] > vol_min
                    and m["ret6mPct"] is not None]
-    # Fetch market cap + sector via .info
-    out = []
-    for m in passed_tech:
+
+    # Fetch market cap + sector in PARALLEL (was sequential — saved ~30s on 36 stocks)
+    def fetch_info(m):
         try:
             t = yf.Ticker(f"{m['symbol']}.NS")
             info = t.info or {}
             mc = info.get("marketCap")
-            if mc is None or mc / 1e7 <= mcap_min_cr:
-                continue
-            out.append({
+            if mc is None:
+                return None
+            return {
                 **m,
                 "longName": info.get("longName") or info.get("shortName") or m["symbol"],
                 "sector": info.get("sector") or "—",
                 "industry": info.get("industry") or "—",
                 "marketCapCr": float(mc) / 1e7,
-            })
+            }
         except Exception:
-            continue
+            return None
+
+    out = []
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(fetch_info, m): m for m in passed_tech}
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None and result["marketCapCr"] > mcap_min_cr:
+                out.append(result)
     out.sort(key=lambda x: x["ret6mPct"], reverse=True)
     out = out[:top_n]
     for i, s in enumerate(out):

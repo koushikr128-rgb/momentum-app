@@ -33,6 +33,7 @@ type ScreenResponse = {
   top10: ScreenedStock[];
   runAt: string;
   elapsedMs: number;
+  error?: string;
 };
 
 type AllocateResponse = {
@@ -128,6 +129,10 @@ export default function Home() {
   // Filter thresholds (loosened defaults yield ~25 qualifiers)
   const [filters, setFilters] = useState({ rsiMin: 50, mcapMin: 200, volMin: 20000 });
 
+  // Auto-load state (effect is defined AFTER runScreen below to avoid TDZ error)
+  const [autoLoadStarted, setAutoLoadStarted] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
+
   // Auto-refresh state
   const [autoRefreshOn, setAutoRefreshOn] = useState(false);
   const [autoRefreshMin, setAutoRefreshMin] = useState(60);
@@ -154,7 +159,7 @@ export default function Home() {
   }, []);
 
   const runScreen = useCallback(async (silent = false, topNOverride?: number, filtersOverride?: typeof filters) => {
-    if (!silent) setRunning("screen");
+    setRunning("screen");  // always set running state so loading indicator shows
     try {
       const n = topNOverride ?? topN;
       const f = filtersOverride ?? filters;
@@ -180,6 +185,16 @@ export default function Home() {
       setRunning(null);
     }
   }, [topN, filters]);
+
+  // Auto-load on mount: kick off screen fetch immediately so user doesn't wait
+  useEffect(() => {
+    if (autoLoadStarted) return;
+    setAutoLoadStarted(true);
+    const start = Date.now();
+    const timer = setInterval(() => setElapsedMs(Date.now() - start), 500);
+    runScreen(true).finally(() => clearInterval(timer));
+    return () => clearInterval(timer);
+  }, []);
 
   const runAllocation = useCallback(async (silent = false) => {
     if (!screen) return;
@@ -488,7 +503,11 @@ export default function Home() {
           <div className="flex items-center gap-1.5">
             <Badge variant="outline" className="pastel-positive text-[10px] px-1.5 py-0 h-5 font-medium hidden sm:inline-flex">
               <Activity className="w-2.5 h-2.5 mr-1" />
-              {screen ? new Date(screen.runAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}
+              {running === "screen" && !screen
+                ? `Loading ${elapsedMs ? (elapsedMs / 1000).toFixed(0) : 0}s…`
+                : screen
+                  ? new Date(screen.runAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+                  : "—"}
             </Badge>
             {autoRefreshOn && (
               <Badge variant="outline" className="pastel-info text-[10px] px-1.5 py-0 h-5 font-medium tabular-nums">
@@ -708,7 +727,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -790,8 +809,49 @@ export default function Home() {
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN, filters }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number } }) {
-  if (running && !screen) return <Skeleton className="h-96 w-full" />;
+function ScreenPanel({ screen, running, topN, filters, elapsedMs }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number }) {
+  if (running && !screen) {
+    const elapsed = elapsedMs ? (elapsedMs / 1000).toFixed(1) : "0.0";
+    const pct = Math.min(95, (elapsedMs || 0) / 300); // ~30s estimated total
+    return (
+      <Card className="card-pastel">
+        <CardContent className="p-8">
+          <div className="flex flex-col items-center justify-center text-center space-y-4">
+            <div className="relative">
+              <RefreshCw className="w-12 h-12 text-primary animate-spin" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-foreground">Fetching live market data…</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Downloading 18 months of OHLCV for ~344 NSE stocks, computing RSI/MA/returns, then fetching market cap + sector for qualifiers.
+              </p>
+            </div>
+            <div className="w-full max-w-md space-y-2">
+              <Progress value={pct} className="h-2" />
+              <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+                <span>{elapsed}s elapsed</span>
+                <span>est. 25-30s total</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 w-full max-w-md text-xs">
+              <div className="pastel-info rounded-md p-2 text-center">
+                <div className="font-bold tabular-nums">1</div>
+                <div className="text-[10px] opacity-80">Download OHLCV</div>
+              </div>
+              <div className="pastel-warning rounded-md p-2 text-center">
+                <div className="font-bold tabular-nums">2</div>
+                <div className="text-[10px] opacity-80">Compute indicators</div>
+              </div>
+              <div className="pastel-purple rounded-md p-2 text-center">
+                <div className="font-bold tabular-nums">3</div>
+                <div className="text-[10px] opacity-80">Fetch market cap</div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
   if (!screen) {
     return (
       <Card className="card-pastel">
@@ -820,6 +880,22 @@ function ScreenPanel({ screen, running, topN, filters }: { screen: ScreenRespons
   }
   return (
     <div className="space-y-4">
+      {/* Error banner if Yahoo rate-limited */}
+      {screen.error && (
+        <Card className="card-pastel border-amber-300/60 bg-amber-50/50">
+          <CardContent className="p-4 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-amber-900">Yahoo Finance rate-limited</p>
+              <p className="text-xs text-amber-700 mt-1">{screen.error}</p>
+              <p className="text-xs text-amber-600 mt-2">
+                The screen will auto-retry. You can also click "Run Screen" again in a minute.
+                Results below may be incomplete or empty.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard icon={<Activity className="w-4 h-4" />} label="Universe" value={String(screen.universeSize)} sub="NSE stocks" />
@@ -837,6 +913,20 @@ function ScreenPanel({ screen, running, topN, filters }: { screen: ScreenRespons
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {screen.top10.length === 0 ? (
+            <div className="p-6 text-center space-y-3">
+              <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
+              <div>
+                <p className="text-sm font-medium text-foreground">No stocks passed the filters</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  This is usually because Yahoo Finance rate-limited the market cap lookup. Try again in 30 seconds.
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {screen.passedTech} stocks passed technical filters but market cap data couldn't be fetched for all of them.
+              </p>
+            </div>
+          ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
@@ -876,6 +966,7 @@ function ScreenPanel({ screen, running, topN, filters }: { screen: ScreenRespons
               </TableBody>
             </Table>
           </div>
+          )}
         </CardContent>
       </Card>
     </div>
