@@ -14,7 +14,6 @@
 import { NextResponse } from "next/server";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { promises as fs } from "fs";
 
 const execFileAsync = promisify(execFile);
 export const runtime = "nodejs";
@@ -57,7 +56,8 @@ export async function GET(req: Request) {
 
   // 2. Try fresh fetch (with reduced timeout to avoid user frustration)
   try {
-    await fs.access(SCRIPT);
+    // Skip fs.access() — execFile will fail with a clear error if file is missing.
+    // The access() check was causing spurious ENOENT errors during dev server restarts.
     const filtersJson = JSON.stringify({ rsi_min: rsiMin, mcap_min_cr: mcapMin, vol_min: volMin });
     const { stdout, stderr } = await execFileAsync(
       PYTHON,
@@ -66,6 +66,7 @@ export async function GET(req: Request) {
     );
     void stderr;
     const lastLine = stdout.trim().split("\n").pop() as string;
+    if (!lastLine) throw new Error("Python script returned no output");
     const data = JSON.parse(lastLine);
 
     // If Python returned an error field but no stocks, treat as failure → fall back to cache
@@ -84,6 +85,9 @@ export async function GET(req: Request) {
     lastSuccessful = { data: enriched, ts: Date.now() };
     return NextResponse.json(enriched);
   } catch (e) {
+    const errMsg = e instanceof Error ? e.message : "Backend fetch failed";
+    const isEnoent = errMsg.includes("ENOENT") || errMsg.includes("no such file");
+
     // 3. Fresh fetch failed — fall back to stale cache (even if expired)
     if (cached) {
       return NextResponse.json({
@@ -94,7 +98,9 @@ export async function GET(req: Request) {
         elapsedMs: Date.now() - start,
         topN,
         filters: { rsiMin, mcapMin, volMin },
-        warning: "Yahoo Finance rate-limited or timed out. Showing cached data from earlier.",
+        warning: isEnoent
+          ? "Backend script temporarily unavailable (dev server restarting). Showing cached data."
+          : "Yahoo Finance rate-limited or timed out. Showing cached data from earlier.",
       });
     }
     // 4. No cache for this variant — try global last successful (different topN/filters)
@@ -102,7 +108,6 @@ export async function GET(req: Request) {
       const lsData = lastSuccessful.data as Record<string, unknown>;
       const lsTopN = (lsData.topN as number) || 10;
       const lsStocks = (lsData.top10 as unknown[]) || [];
-      // Slice to requested topN if last successful had more, else use as-is
       const sliced = lsStocks.slice(0, topN);
       return NextResponse.json({
         ...lsData,
@@ -114,13 +119,19 @@ export async function GET(req: Request) {
         cacheAge: Date.now() - lastSuccessful.ts,
         elapsedMs: Date.now() - start,
         filters: { rsiMin, mcapMin, volMin },
-        warning: `Yahoo Finance rate-limited. Showing data from a previous successful fetch (Top ${lsTopN}, sliced to ${topN}).`,
+        warning: isEnoent
+          ? `Backend script temporarily unavailable. Showing data from a previous successful fetch (Top ${lsTopN}, sliced to ${topN}).`
+          : `Yahoo Finance rate-limited. Showing data from a previous successful fetch (Top ${lsTopN}, sliced to ${topN}).`,
       });
     }
     // 5. Truly no data — return empty 200 with error field (not 500, so UI doesn't crash)
     return NextResponse.json({
-      error: e instanceof Error ? e.message : "Backend fetch failed and no cache available",
-      warning: "Yahoo Finance is rate-limiting requests. Please wait a few minutes and try again.",
+      error: isEnoent
+        ? "Backend script is starting up. Please wait a few seconds and try again."
+        : errMsg,
+      warning: isEnoent
+        ? "The Python backend is temporarily unavailable. Please retry in a few seconds."
+        : "Yahoo Finance is rate-limiting requests. Please wait a few minutes and try again.",
       universeSize: 0,
       passedData: 0,
       passedTech: 0,
