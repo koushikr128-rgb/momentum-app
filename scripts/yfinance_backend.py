@@ -144,6 +144,27 @@ def compute_metrics(symbol, candles_df):
     win = close.tail(252) if len(close) >= 252 else close
     high = float(win.max())
     low = float(win.min())
+    # Momentum score (0-100) — weighted blend of returns + RSI + Sharpe
+    r6 = max(-50, min(200, ret(126) or 0))
+    r3 = max(-30, min(120, ret(63) or 0))
+    r1 = max(-20, min(80, ret(21) or 0))
+    rsi_val = float(rsi)
+    if rsi_val > 80:
+        rsi_score = 50 - (rsi_val - 80) * 2
+    elif rsi_val < 50:
+        rsi_score = rsi_val
+    else:
+        rsi_score = 50 + (rsi_val - 50) * 1.5
+    sharpe_val = sharpe or 0
+    sharpe_score = max(0, min(100, sharpe_val * 30))
+    momentum_score = max(0, min(100,
+        0.40 * (r6 / 2 + 25) +
+        0.20 * (r3 / 2.4 + 25) +
+        0.15 * (r1 / 1.6 + 25) +
+        0.15 * rsi_score +
+        0.10 * sharpe_score
+    ))
+
     return {
         "symbol": symbol,
         "lastDate": close.index[-1].strftime("%Y-%m-%d"),
@@ -162,6 +183,7 @@ def compute_metrics(symbol, candles_df):
         "pctBelowHigh": (current / high - 1) * 100 if high > 0 else None,
         "pctAboveLow": (current / low - 1) * 100 if low > 0 else None,
         "pctAbove200dma": (current / dma200 - 1) * 100 if dma200 > 0 else None,
+        "momentumScore": float(momentum_score),
     }
 
 

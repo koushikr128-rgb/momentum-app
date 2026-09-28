@@ -1,9 +1,9 @@
 // POST /api/allocate
-// Body: { stocks: ScreenedStock[], totalInvestment: number }
+// Body: { stocks: ScreenedStock[], totalInvestment: number, mode?: "risk-parity" | "momentum" }
 // Returns: { allocation, removedStocks, totalInvested, totalAllocated, cashLeftover, sectorBreakdown }
 
 import { NextResponse } from "next/server";
-import { computeAllocation } from "@/lib/strategy";
+import { computeAllocation, computeMomentumAllocation } from "@/lib/strategy";
 import { ScreenedStock, AllocationStock } from "@/lib/indicators";
 
 export const runtime = "nodejs";
@@ -13,15 +13,20 @@ export async function POST(req: Request) {
     const body = await req.json();
     const stocks = body.stocks as ScreenedStock[];
     const totalInvestment = Number(body.totalInvestment || 200000);
+    const mode = (body.mode as "risk-parity" | "momentum") || "risk-parity";
 
     if (!Array.isArray(stocks) || stocks.length === 0) {
       return NextResponse.json({ error: "stocks[] is required" }, { status: 400 });
     }
 
-    const { allocation, removedStocks } = computeAllocation(stocks, totalInvestment);
+    const { allocation, removedStocks } = mode === "momentum"
+      ? computeMomentumAllocation(stocks, totalInvestment)
+      : computeAllocation(stocks, totalInvestment);
+
     return NextResponse.json({
       allocation,
       removedStocks,
+      mode,
       totalInvested: totalInvestment,
       totalAllocated: allocation.reduce((a, b) => a + b.rupees, 0),
       cashLeftover: totalInvestment - allocation.reduce((a, b) => a + b.shares * b.currentPrice, 0),

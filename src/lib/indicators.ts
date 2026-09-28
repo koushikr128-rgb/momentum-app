@@ -19,6 +19,7 @@ export interface StockMetrics {
   pctBelowHigh: number;
   pctAboveLow: number;
   pctAbove200dma: number;
+  momentumScore: number;  // 0-100 blended momentum score
 }
 
 function sma(values: number[], n: number): number {
@@ -121,6 +122,29 @@ export function computeMetrics(symbol: string, candles: Candle[]): StockMetrics 
   const pctAboveLow = low52w > 0 ? (currentPrice / low52w - 1) * 100 : NaN;
   const pctAbove200dma = dma200 > 0 ? (currentPrice / dma200 - 1) * 100 : NaN;
 
+  // Momentum score (0-100) — weighted blend of:
+  //   6M return (40%) — primary momentum signal
+  //   3M return (20%) — medium-term
+  //   1M return (15%) — recent acceleration
+  //   RSI placement (15%) — strength of recent move (60-80 ideal, >80 overbought)
+  //   Sharpe (10%) — risk-adjusted quality
+  const r6 = clamp(ret6mPct, -50, 200);     // cap at 200%
+  const r3 = clamp(ret3mPct, -30, 120);
+  const r1 = clamp(ret1mPct, -20, 80);
+  const rsiScore = rsi14 > 80 ? 50 - (rsi14 - 80) * 2   // overbought penalty
+    : rsi14 < 50 ? rsi14                    // weak
+    : 50 + (rsi14 - 50) * 1.5;              // 50-80 → 50-95
+  const sharpeScore = clamp(sharpe * 30, 0, 100);
+
+  const momentumScore = clamp(
+    0.40 * (r6 / 2 + 25) +    // 6M: 0% → 25, 100% → 75, 200% → 100
+    0.20 * (r3 / 2.4 + 25) +  // 3M: 0% → 25, 60% → 50, 120% → 75
+    0.15 * (r1 / 1.6 + 25) +  // 1M: 0% → 25, 40% → 50, 80% → 75
+    0.15 * rsiScore +
+    0.10 * sharpeScore,
+    0, 100
+  );
+
   const lastTs = candles[candles.length - 1].timestamp;
   const lastDate = new Date(lastTs * 1000).toISOString().slice(0, 10);
 
@@ -142,7 +166,13 @@ export function computeMetrics(symbol: string, candles: Candle[]): StockMetrics 
     pctBelowHigh,
     pctAboveLow,
     pctAbove200dma,
+    momentumScore,
   };
+}
+
+function clamp(v: number, min: number, max: number): number {
+  if (isNaN(v)) return min;
+  return Math.max(min, Math.min(max, v));
 }
 
 export interface ScreenedStock extends StockMetrics {

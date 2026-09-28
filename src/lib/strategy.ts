@@ -177,6 +177,278 @@ function rsiMultiplier(rsi: number): number {
   return 1;
 }
 
+/* ------------------------------------------------------------------ *
+ *  Momentum-weighted allocation                                      *
+ * ------------------------------------------------------------------ *
+ *  Instead of inverse-vol risk parity, weight stocks by momentum     *
+ *  score (0-100). Higher-momentum stocks get larger positions.        *
+ *  Soft caps (25% per stock, 40% per sector) — not hard caps.        *
+ *  Still applies affordability filter (price < allocated rupees).    */
+
+export function computeMomentumAllocation(
+  stocks: ScreenedStock[],
+  totalInvestment: number,
+  posCap = 0.25,        // soft cap: 25% per stock (was 15%)
+  sectorCap = 0.40,     // soft cap: 40% per sector (was 25%)
+  floor = 0.03          // lower floor: 3% (was 5%) — momentum books are concentrated
+): AllocationResult {
+  if (stocks.length === 0) return { allocation: [], removedStocks: [] };
+
+  const removedStocks: RemovedStock[] = [];
+  let workingSet = stocks.slice();
+
+  for (let pass = 0; pass < stocks.length; pass++) {
+    if (workingSet.length === 0) break;
+
+    // Weight by momentum score squared — amplifies the strongest names
+    // (square prevents the top stock from dominating linearly)
+    const d = workingSet.map((s) => {
+      const ms = s.momentumScore || 50;
+      const rawW = Math.pow(ms / 50, 2);  // normalize: score 50 → 1.0, score 100 → 4.0
+      return { ...s, rawW };
+    });
+    const sumRaw = d.reduce((acc, s) => acc + s.rawW, 0);
+    let w = d.map((s) => s.rawW / sumRaw);
+
+    // Iterative soft caps + renormalize
+    for (let iter = 0; iter < 20; iter++) {
+      w = w.map((v) => Math.max(v, floor));
+      w = w.map((v) => Math.min(v, posCap));
+      const sectorSums = new Map<string, number>();
+      d.forEach((s, i) => {
+        sectorSums.set(s.sector, (sectorSums.get(s.sector) || 0) + w[i]);
+      });
+      d.forEach((s, i) => {
+        const ss = sectorSums.get(s.sector)!;
+        if (ss > sectorCap) {
+          w[i] = (w[i] * sectorCap) / ss;
+        }
+      });
+      const sum = w.reduce((a, b) => a + b, 0);
+      w = w.map((v) => v / sum);
+    }
+
+    // Affordability filter
+    const toRemove: number[] = [];
+    d.forEach((s, i) => {
+      const rupees = w[i] * totalInvestment;
+      if (rupees < s.currentPrice * 1.05) {
+        toRemove.push(i);
+      }
+    });
+
+    if (toRemove.length === 0) {
+      const allocation = d
+        .map((s, i) => {
+          const weight = w[i];
+          const rupees = weight * totalInvestment;
+          const shares = Math.max(1, Math.round(rupees / s.currentPrice));
+          const notes: string[] = [];
+          if (s.momentumScore > 75) notes.push(`🔥 Momentum ${s.momentumScore.toFixed(0)}`);
+          else if (s.momentumScore > 60) notes.push(`Momentum ${s.momentumScore.toFixed(0)}`);
+          if (s.rsi14 > 80) notes.push("RSI>80");
+          if (weight >= posCap - 0.005) notes.push(`capped@${(posCap * 100).toFixed(0)}%`);
+          return {
+            ...s,
+            weight,
+            rupees,
+            shares,
+            rsiMultiplier: 1,
+            notes: notes.join(", "),
+          };
+        })
+        .sort((a, b) => b.weight - a.weight);
+      return { allocation, removedStocks };
+    }
+
+    toRemove.sort((a, b) => b - a).forEach((i) => {
+      const s = d[i];
+      const rupees = w[i] * totalInvestment;
+      removedStocks.push({
+        symbol: s.symbol,
+        sector: s.sector,
+        currentPrice: s.currentPrice,
+        attemptedRupees: rupees,
+        attemptedWeight: w[i],
+        reason: `Price ₹${s.currentPrice.toFixed(0)} > allocation ₹${rupees.toFixed(0)} (can't buy 1 share)`,
+      });
+      workingSet = workingSet.filter((x) => x.symbol !== s.symbol);
+    });
+  }
+  return { allocation: [], removedStocks };
+}
+
+/* ------------------------------------------------------------------ *
+ *  Rebalance engine                                                  *
+ * ------------------------------------------------------------------ *
+ *  Compare current holdings to fresh screen. For each holding,       *
+ *  compute momentum delta (current score vs entry score).            *
+ *  Returns actions: BUY MORE / HOLD / TRIM 30% / TRIM 60% / EXIT.    *
+ *  Also flags new high-momentum stocks not in portfolio: INITIATE.    */
+
+export type RebalanceAction = "BUY MORE" | "HOLD" | "TRIM 30%" | "TRIM 60%" | "EXIT" | "INITIATE";
+
+export interface RebalanceItem {
+  symbol: string;
+  longName: string;
+  sector: string;
+  action: RebalanceAction;
+  currentPrice: number;
+  entryPrice?: number;        // for held stocks
+  pnlPct?: number;            // for held stocks
+  currentMomentum: number;    // 0-100
+  previousMomentum?: number;   // for held stocks (entry-time score)
+  momentumDelta?: number;      // current - previous (for held)
+  currentShares?: number;
+  targetShares: number;        // suggested after action
+  sharesChange: number;        // positive = buy, negative = sell
+  rupeesChange: number;        // positive = buy, negative = sell
+  reason: string;
+}
+
+export interface RebalanceResult {
+  items: RebalanceItem[];
+  summary: {
+    buyMore: number;
+    hold: number;
+    trim30: number;
+    trim60: number;
+    exit: number;
+    initiate: number;
+    totalBuyRupees: number;
+    totalSellRupees: number;
+    netCashflow: number;  // negative = need to deploy more capital, positive = cash freed
+  };
+}
+
+export function computeRebalance(
+  heldAllocation: AllocationStock[],
+  freshScreen: ScreenedStock[],
+  totalInvestment: number
+): RebalanceResult {
+  const heldMap = new Map<string, AllocationStock>();
+  for (const h of heldAllocation) {
+    heldMap.set(h.symbol, h);
+  }
+
+  const freshMap = new Map<string, ScreenedStock>();
+  for (const s of freshScreen) {
+    freshMap.set(s.symbol, s);
+  }
+
+  const items: RebalanceItem[] = [];
+
+  // Process held stocks first
+  for (const held of heldAllocation) {
+    const fresh = freshMap.get(held.symbol);
+    const currentPrice = fresh?.currentPrice ?? held.currentPrice;
+    const currentMomentum = fresh?.momentumScore ?? held.momentumScore ?? 50;
+    const previousMomentum = held.momentumScore ?? 50;
+    const momentumDelta = currentMomentum - previousMomentum;
+    const pnlPct = (currentPrice / held.currentPrice - 1) * 100;
+    const currentShares = held.shares;
+
+    let action: RebalanceAction;
+    let targetShares: number;
+    let reason: string;
+
+    if (!fresh) {
+      // Stock no longer in fresh screen — momentum died or filters failed
+      action = "EXIT";
+      targetShares = 0;
+      reason = "No longer passes screen filters — full exit";
+    } else if (momentumDelta > 10) {
+      // Momentum accelerated — buy more (50% increase in position)
+      action = "BUY MORE";
+      targetShares = Math.round(currentShares * 1.5);
+      reason = `Momentum +${momentumDelta.toFixed(0)} (was ${previousMomentum.toFixed(0)}, now ${currentMomentum.toFixed(0)}) — add 50%`;
+    } else if (momentumDelta >= -10) {
+      // Momentum stable — hold
+      action = "HOLD";
+      targetShares = currentShares;
+      reason = `Momentum stable (${momentumDelta >= 0 ? "+" : ""}${momentumDelta.toFixed(0)})`;
+    } else if (momentumDelta >= -25) {
+      // Slight momentum decline — trim 30%
+      action = "TRIM 30%";
+      targetShares = Math.round(currentShares * 0.7);
+      reason = `Momentum ${momentumDelta.toFixed(0)} (was ${previousMomentum.toFixed(0)}, now ${currentMomentum.toFixed(0)}) — trim 30%, lock gains`;
+    } else if (momentumDelta >= -40) {
+      // Significant decline — trim 60%
+      action = "TRIM 60%";
+      targetShares = Math.round(currentShares * 0.4);
+      reason = `Momentum ${momentumDelta.toFixed(0)} (was ${previousMomentum.toFixed(0)}, now ${currentMomentum.toFixed(0)}) — trim 60%, de-risk`;
+    } else {
+      // Momentum collapsed — exit
+      action = "EXIT";
+      targetShares = 0;
+      reason = `Momentum ${momentumDelta.toFixed(0)} (was ${previousMomentum.toFixed(0)}, now ${currentMomentum.toFixed(0)}) — full exit`;
+    }
+
+    const sharesChange = targetShares - currentShares;
+    const rupeesChange = sharesChange * currentPrice;
+
+    items.push({
+      symbol: held.symbol,
+      longName: held.longName,
+      sector: held.sector,
+      action,
+      currentPrice,
+      entryPrice: held.currentPrice,
+      pnlPct,
+      currentMomentum,
+      previousMomentum,
+      momentumDelta,
+      currentShares,
+      targetShares,
+      sharesChange,
+      rupeesChange,
+      reason,
+    });
+  }
+
+  // Find new high-momentum stocks not in portfolio — INITIATE
+  for (const fresh of freshScreen) {
+    if (!heldMap.has(fresh.symbol) && fresh.momentumScore > 60) {
+      // Allocate ~5% of capital to new initiations
+      const targetRupees = totalInvestment * 0.05;
+      const targetShares = Math.max(1, Math.round(targetRupees / fresh.currentPrice));
+      items.push({
+        symbol: fresh.symbol,
+        longName: fresh.longName,
+        sector: fresh.sector,
+        action: "INITIATE",
+        currentPrice: fresh.currentPrice,
+        currentMomentum: fresh.momentumScore,
+        targetShares,
+        sharesChange: targetShares,
+        rupeesChange: targetShares * fresh.currentPrice,
+        reason: `New high-momentum stock (score ${fresh.momentumScore.toFixed(0)}) — initiate 5% position`,
+      });
+    }
+  }
+
+  // Sort: EXIT first, then TRIM 60%, TRIM 30%, HOLD, BUY MORE, INITIATE
+  const actionOrder: Record<RebalanceAction, number> = {
+    EXIT: 0, "TRIM 60%": 1, "TRIM 30%": 2, HOLD: 3, "BUY MORE": 4, INITIATE: 5,
+  };
+  items.sort((a, b) => actionOrder[a.action] - actionOrder[b.action]);
+
+  // Summary
+  const summary = {
+    buyMore: items.filter((i) => i.action === "BUY MORE").length,
+    hold: items.filter((i) => i.action === "HOLD").length,
+    trim30: items.filter((i) => i.action === "TRIM 30%").length,
+    trim60: items.filter((i) => i.action === "TRIM 60%").length,
+    exit: items.filter((i) => i.action === "EXIT").length,
+    initiate: items.filter((i) => i.action === "INITIATE").length,
+    totalBuyRupees: items.filter((i) => i.rupeesChange > 0).reduce((a, b) => a + b.rupeesChange, 0),
+    totalSellRupees: Math.abs(items.filter((i) => i.rupeesChange < 0).reduce((a, b) => a + b.rupeesChange, 0)),
+    netCashflow: items.reduce((a, b) => a + b.rupeesChange, 0),
+  };
+
+  return { items, summary };
+}
+
 /**
  * Stop-loss monitor — uses entry price (from allocation) + fresh OHLCV (already in metrics).
  */

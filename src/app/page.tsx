@@ -48,10 +48,46 @@ type RemovedStock = {
 type AllocateResponse = {
   allocation: AllocationStock[];
   removedStocks: RemovedStock[];
+  mode?: "risk-parity" | "momentum";
   totalInvested: number;
   totalAllocated: number;
   cashLeftover: number;
   sectorBreakdown: Array<{ sector: string; weight: number; count: number; rupees: number }>;
+};
+
+type RebalanceAction = "BUY MORE" | "HOLD" | "TRIM 30%" | "TRIM 60%" | "EXIT" | "INITIATE";
+
+type RebalanceItem = {
+  symbol: string;
+  longName: string;
+  sector: string;
+  action: RebalanceAction;
+  currentPrice: number;
+  entryPrice?: number;
+  pnlPct?: number;
+  currentMomentum: number;
+  previousMomentum?: number;
+  momentumDelta?: number;
+  currentShares?: number;
+  targetShares: number;
+  sharesChange: number;
+  rupeesChange: number;
+  reason: string;
+};
+
+type RebalanceResult = {
+  items: RebalanceItem[];
+  summary: {
+    buyMore: number;
+    hold: number;
+    trim30: number;
+    trim60: number;
+    exit: number;
+    initiate: number;
+    totalBuyRupees: number;
+    totalSellRupees: number;
+    netCashflow: number;
+  };
 };
 
 type StopsResponse = {
@@ -139,6 +175,13 @@ export default function Home() {
   // Filter thresholds (loosened defaults yield ~25 qualifiers)
   const [filters, setFilters] = useState({ rsiMin: 50, mcapMin: 200, volMin: 20000 });
 
+  // Allocation mode: "risk-parity" (inverse-vol) or "momentum" (momentum-weighted)
+  const [allocationMode, setAllocationMode] = useState<"risk-parity" | "momentum">("risk-parity");
+
+  // Rebalance state
+  const [rebalance, setRebalance] = useState<RebalanceResult | null>(null);
+  const [rebalanceRunning, setRebalanceRunning] = useState(false);
+
   // Auto-load state (effect is defined AFTER runScreen below to avoid TDZ error)
   const [autoLoadStarted, setAutoLoadStarted] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -206,20 +249,23 @@ export default function Home() {
     return () => clearInterval(timer);
   }, []);
 
-  const runAllocation = useCallback(async (silent = false) => {
+  const runAllocation = useCallback(async (silent = false, modeOverride?: "risk-parity" | "momentum") => {
     if (!screen) return;
     try {
+      const mode = modeOverride ?? allocationMode;
       const res = await fetch("/api/allocate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stocks: screen.top10, totalInvestment }),
+        body: JSON.stringify({ stocks: screen.top10, totalInvestment, mode }),
       });
       if (!res.ok) throw new Error("Allocation failed");
       const data: AllocateResponse = await res.json();
       setAlloc(data);
       setAllocDirty(false);
+      // Invalidate rebalance since allocation changed
+      setRebalance(null);
       if (!silent) {
-        toast({ title: "Allocation computed", description: fmtINR(data.totalInvested) + " across " + data.allocation.length + " stocks" });
+        toast({ title: "Allocation computed", description: `${fmtINR(data.totalInvested)} across ${data.allocation.length} stocks (${mode === "momentum" ? "momentum-weighted" : "risk parity"})` });
       }
       return data;
     } catch (e) {
@@ -228,7 +274,35 @@ export default function Home() {
       }
       return null;
     }
-  }, [screen, totalInvestment]);
+  }, [screen, totalInvestment, allocationMode]);
+
+  const runRebalance = useCallback(async () => {
+    if (!alloc || !screen) return;
+    setRebalanceRunning(true);
+    try {
+      const res = await fetch("/api/rebalance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allocation: alloc.allocation,
+          screen: screen.top10,
+          totalInvestment: alloc.totalInvested,
+        }),
+      });
+      if (!res.ok) throw new Error("Rebalance failed");
+      const data: RebalanceResult = await res.json();
+      setRebalance(data);
+      const s = data.summary;
+      toast({
+        title: "Rebalance computed",
+        description: `${s.buyMore} buy more · ${s.hold} hold · ${s.trim30 + s.trim60} trim · ${s.exit} exit · ${s.initiate} new`,
+      });
+    } catch (e) {
+      toast({ title: "Rebalance failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+    } finally {
+      setRebalanceRunning(false);
+    }
+  }, [alloc, screen]);
 
   const runStops = useCallback(async (silent = false) => {
     if (!alloc) return;
@@ -751,6 +825,11 @@ export default function Home() {
               allocDirty={allocDirty}
               onGoToStops={() => setTab("stops")}
               onGoToStress={() => setTab("stress")}
+              allocationMode={allocationMode}
+              setAllocationMode={setAllocationMode}
+              rebalance={rebalance}
+              runRebalance={runRebalance}
+              rebalanceRunning={rebalanceRunning}
             />
           </TabsContent>
 
@@ -951,6 +1030,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs }: { screen: Sc
                   <TableHead className="text-right">3M %</TableHead>
                   <TableHead className="text-right">6M %</TableHead>
                   <TableHead className="text-right hidden lg:table-cell">Sharpe</TableHead>
+                  <TableHead className="text-right hidden md:table-cell">Mom. Score</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -971,6 +1051,9 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs }: { screen: Sc
                     <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret3mPct} /></TableCell>
                     <TableCell className="text-right tabular-nums font-semibold"><ReturnCell pct={s.ret6mPct} /></TableCell>
                     <TableCell className="text-right hidden lg:table-cell tabular-nums">{fmt(s.sharpe)}</TableCell>
+                    <TableCell className="text-right hidden md:table-cell">
+                      <MomentumScoreBadge score={s.momentumScore} />
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -986,6 +1069,8 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs }: { screen: Sc
 /* ---------------------------------------------------------------- AllocationPanel */
 function AllocationPanel({
   screen, alloc, totalInvestment, setTotalInvestment, runAllocation, allocDirty, onGoToStops, onGoToStress,
+  allocationMode, setAllocationMode,
+  rebalance, runRebalance, rebalanceRunning,
 }: {
   screen: ScreenResponse | null;
   alloc: AllocateResponse | null;
@@ -995,6 +1080,11 @@ function AllocationPanel({
   allocDirty: boolean;
   onGoToStops: () => void;
   onGoToStress: () => void;
+  allocationMode: "risk-parity" | "momentum";
+  setAllocationMode: (m: "risk-parity" | "momentum") => void;
+  rebalance: RebalanceResult | null;
+  runRebalance: () => void;
+  rebalanceRunning: boolean;
 }) {
   if (!screen) {
     return (
@@ -1006,11 +1096,11 @@ function AllocationPanel({
   }
   return (
     <div className="space-y-4">
-      {/* Investment input */}
+      {/* Investment input + allocation mode toggle */}
       <Card className="card-pastel">
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Wallet className="w-5 h-5 text-primary" /> Investment Amount</CardTitle>
-          <CardDescription>Enter your total capital to allocate across the Top {screen?.top10.length ?? topN} momentum stocks.</CardDescription>
+          <CardDescription>Enter your total capital to allocate across the Top {screen?.top10.length ?? 10} momentum stocks.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col sm:flex-row sm:items-end gap-3">
@@ -1036,8 +1126,62 @@ function AllocationPanel({
               </>
             )}
           </div>
+
+          {/* Allocation mode toggle */}
+          <div className="mt-4 p-3 rounded-lg bg-muted/50 border border-border/40">
+            <div className="flex items-center justify-between mb-2">
+              <Label className="text-xs font-medium text-foreground">Allocation Engine</Label>
+              <div className="flex rounded-md bg-background border border-border overflow-hidden">
+                <button
+                  onClick={() => setAllocationMode("risk-parity")}
+                  className={`px-3 py-1 text-[11px] font-medium transition-colors ${allocationMode === "risk-parity" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  Risk Parity
+                </button>
+                <button
+                  onClick={() => setAllocationMode("momentum")}
+                  className={`px-3 py-1 text-[11px] font-medium transition-colors ${allocationMode === "momentum" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  Momentum-weighted
+                </button>
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {allocationMode === "risk-parity"
+                ? "Inverse-volatility × RSI penalty · Hard caps: 15% per stock, 25% per sector, 5% floor. Equal risk contribution."
+                : "Momentum score² weighting · Soft caps: 25% per stock, 40% per sector, 3% floor. Stronger momentum = larger position."}
+            </p>
+            {alloc && allocationMode !== alloc.mode && (
+              <p className="text-[10px] text-amber-600 mt-1">
+                ⚠ Mode changed — click "Recompute" to apply the new engine
+              </p>
+            )}
+          </div>
+
+          {/* Rebalance button — appears when allocation exists */}
+          {alloc && (
+            <div className="mt-3 p-3 rounded-lg pastel-purple/30 border border-purple-200/40">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-foreground">Dynamic Rebalance</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Compare current holdings to fresh screen. Buy more if momentum rose, trim if it fell, exit if it died.
+                  </p>
+                </div>
+                <Button onClick={runRebalance} disabled={rebalanceRunning} size="sm" variant="outline" className="shrink-0">
+                  <RefreshCw className={`w-3 h-3 mr-1.5 ${rebalanceRunning ? "animate-spin" : ""}`} />
+                  {rebalanceRunning ? "Computing…" : "Run Rebalance"}
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      {/* Rebalance results table */}
+      {rebalance && (
+        <RebalancePanel rebalance={rebalance} />
+      )}
 
       {alloc && (
         <>
@@ -1446,6 +1590,140 @@ function StatusBadge({ status }: { status: "HOLD" | "WATCH" | "EXIT" }) {
     EXIT: "pastel-negative",
   };
   return <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold ${map[status]}`}>{status}</span>;
+}
+
+function MomentumScoreBadge({ score }: { score: number }) {
+  if (isNaN(score)) return <span className="text-muted-foreground">—</span>;
+  const cls = score > 75 ? "pastel-positive" : score > 60 ? "pastel-info" : score > 45 ? "bg-muted text-muted-foreground" : "pastel-warning";
+  return <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold tabular-nums ${cls}`}>{score.toFixed(0)}</span>;
+}
+
+/* ---------------------------------------------------------------- RebalancePanel */
+function RebalancePanel({ rebalance }: { rebalance: RebalanceResult }) {
+  const s = rebalance.summary;
+  const actionColors: Record<RebalanceAction, string> = {
+    "BUY MORE": "pastel-positive",
+    "HOLD": "bg-muted text-muted-foreground",
+    "TRIM 30%": "pastel-warning",
+    "TRIM 60%": "pastel-warning",
+    "EXIT": "pastel-negative",
+    "INITIATE": "pastel-info",
+  };
+
+  return (
+    <Card className="card-pastel">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <RefreshCw className="w-4 h-4 text-primary" /> Rebalance Actions
+        </CardTitle>
+        <CardDescription>
+          Compare current holdings to fresh screen · momentum-driven buy/trim/exit decisions
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {/* Summary stat cards */}
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
+          <div className="pastel-positive rounded-md p-2 text-center">
+            <div className="text-base font-bold tabular-nums">{s.buyMore}</div>
+            <div className="text-[9px] opacity-80">Buy More</div>
+          </div>
+          <div className="bg-muted rounded-md p-2 text-center">
+            <div className="text-base font-bold tabular-nums">{s.hold}</div>
+            <div className="text-[9px] text-muted-foreground">Hold</div>
+          </div>
+          <div className="pastel-warning rounded-md p-2 text-center">
+            <div className="text-base font-bold tabular-nums">{s.trim30 + s.trim60}</div>
+            <div className="text-[9px] opacity-80">Trim</div>
+          </div>
+          <div className="pastel-negative rounded-md p-2 text-center">
+            <div className="text-base font-bold tabular-nums">{s.exit}</div>
+            <div className="text-[9px] opacity-80">Exit</div>
+          </div>
+          <div className="pastel-info rounded-md p-2 text-center">
+            <div className="text-base font-bold tabular-nums">{s.initiate}</div>
+            <div className="text-[9px] opacity-80">New</div>
+          </div>
+          <div className="rounded-md p-2 text-center border border-border/60">
+            <div className={`text-base font-bold tabular-nums ${s.netCashflow >= 0 ? "text-emerald-600" : "text-amber-600"}`}>
+              {s.netCashflow >= 0 ? "+" : "−"}{fmtINR(Math.abs(s.netCashflow))}
+            </div>
+            <div className="text-[9px] text-muted-foreground">{s.netCashflow >= 0 ? "Cash freed" : "Deploy"}</div>
+          </div>
+        </div>
+
+        {/* Action table */}
+        <div className="overflow-x-auto scroll-pastel">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Symbol</TableHead>
+                <TableHead className="text-center">Action</TableHead>
+                <TableHead className="text-right hidden sm:table-cell">Entry ₹</TableHead>
+                <TableHead className="text-right">Current ₹</TableHead>
+                <TableHead className="text-right hidden sm:table-cell">P&L %</TableHead>
+                <TableHead className="text-right">Mom. Δ</TableHead>
+                <TableHead className="text-right">Shares</TableHead>
+                <TableHead className="text-right">₹ Change</TableHead>
+                <TableHead className="hidden lg:table-cell">Reason</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rebalance.items.map((item) => (
+                <TableRow key={item.symbol}>
+                  <TableCell>
+                    <div className="font-semibold text-xs">{item.symbol}</div>
+                    <div className="text-[9px] text-muted-foreground line-clamp-1 max-w-[120px]">{item.longName}</div>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold ${actionColors[item.action]}`}>
+                      {item.action}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-xs hidden sm:table-cell">
+                    {item.entryPrice ? fmt(item.entryPrice, 0) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-xs">{fmt(item.currentPrice, 0)}</TableCell>
+                  <TableCell className="text-right tabular-nums text-xs hidden sm:table-cell">
+                    {item.pnlPct !== undefined ? <ReturnCell pct={item.pnlPct} /> : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-xs">
+                    {item.momentumDelta !== undefined ? (
+                      <span className={item.momentumDelta > 0 ? "text-emerald-600 font-semibold" : item.momentumDelta < -10 ? "text-red-600 font-semibold" : "text-muted-foreground"}>
+                        {item.momentumDelta > 0 ? "+" : ""}{item.momentumDelta.toFixed(0)}
+                      </span>
+                    ) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-xs">
+                    <div className="flex flex-col items-end">
+                      <span className="font-medium">{item.targetShares}</span>
+                      {item.currentShares !== undefined && item.sharesChange !== 0 && (
+                        <span className={`text-[9px] ${item.sharesChange > 0 ? "text-emerald-600" : "text-red-600"}`}>
+                          {item.sharesChange > 0 ? "+" : ""}{item.sharesChange}
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-xs">
+                    <span className={item.rupeesChange > 0 ? "text-emerald-600 font-medium" : item.rupeesChange < 0 ? "text-red-600 font-medium" : "text-muted-foreground"}>
+                      {item.rupeesChange > 0 ? "+" : item.rupeesChange < 0 ? "−" : ""}{fmtINR(Math.abs(item.rupeesChange))}
+                    </span>
+                  </TableCell>
+                  <TableCell className="hidden lg:table-cell text-[10px] text-muted-foreground max-w-[200px]">
+                    {item.reason}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+
+        <p className="text-[10px] text-muted-foreground mt-3">
+          <b>Rules:</b> Momentum Δ &gt; +10 → BUY MORE (add 50%) · ±10 → HOLD · −10 to −25 → TRIM 30% · −25 to −40 → TRIM 60% · &lt; −40 or removed from screen → EXIT.
+          New stocks with momentum &gt; 60 not in portfolio → INITIATE (5% position).
+        </p>
+      </CardContent>
+    </Card>
+  );
 }
 
 /* ---------------------------------------------------------------- BacktestPanel */
