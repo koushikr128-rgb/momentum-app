@@ -8,5 +8,6 @@
       "runtime": "@vercel/python@5.x",
       "maxDuration": 60
     }
-  }
+  },
+  "crons": []
 }

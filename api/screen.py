@@ -1,14 +1,22 @@
-# Vercel Python serverless function — Nifty Momentum Screen
-# Deployed at: https://your-app.vercel.app/api/screen.py
-# Uses yfinance (with curl_cffi) to bypass Yahoo's TLS fingerprint blocking
-
+"""
+Vercel Python serverless function — Nifty Momentum Screen
+Deployed at: https://your-app.vercel.app/api/screen.py
+Uses yfinance (which uses curl_cffi) to bypass Yahoo's TLS fingerprint blocking.
+Works on Vercel's Python runtime (not blocked like our sandbox IP).
+"""
 import json
 import sys
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import yfinance as yf
-import pandas as pd
-import numpy as np
+
+try:
+    import yfinance as yf
+    import pandas as pd
+    import numpy as np
+except ImportError:
+    # Will fail gracefully — Vercel installs from requirements.txt
+    pass
 
 UNIVERSE = [
     "ABFRL", "ADANIENT", "ADANIPORTS", "ATGL", "AWL",
@@ -51,8 +59,7 @@ UNIVERSE = [
     "WELCORP", "HINDZINC",
     "BHARTIARTL", "IDEA", "INDUSTOWER",
     "SUNTV", "NETWORK18", "TVTODAY", "PVRINOX",
-    "ZEEL",
-    "SOBHA",
+    "ZEEL", "SOBHA",
     "TRENT", "DMART", "TITAN", "JUBLFOOD", "INDHOTEL",
     "INDIGO", "EIHOTEL", "ASIANPAINT", "BERGERPAINT",
     "HAVELLS", "BAJAJELEC", "VOLTAS", "BLUESTAR",
@@ -67,16 +74,13 @@ UNIVERSE = [
     "MASTEK", "TARSONS",
     "ZOMATO", "PAYTM", "POLICYBZR", "NAUKRI", "INDIAMART",
     "DELHIVERY", "CONCOR", "TCI", "TCIEXP", "BLUEJET",
-    "ANGELONE",
-    "RAYMOND", "GICRE",
+    "ANGELONE", "RAYMOND", "GICRE",
     "VIPIND", "MINDACORP", "TALBROAUTO", "BATAINDIA", "FILATEX",
-    "TIMKEN", "SKFINDIA", "SCHAEFFLER",
-    "MFSL", "AETHER",
+    "TIMKEN", "SKFINDIA", "SCHAEFFLER", "MFSL", "AETHER",
     # Curated mid + small cap additions
     "AARTIDRUGS", "AARTIPHARM", "BAYERCROP", "BLISSGVS", "FDC",
     "GLENMARKLIFE", "GRANULES", "NATCO", "NEULAND", "PANACEABIO",
-    "SANOFI", "SHILPAMED", "STRIDES", "SUVEN", "THYROCARE",
-    "WOCKPHARMA",
+    "SANOFI", "SHILPAMED", "STRIDES", "SUVEN", "THYROCARE", "WOCKPHARMA",
     "ACRYSIL", "ADVANTA", "AETHERIND", "APARINDS", "BALAJIAMINE",
     "BASF", "BHARATRAS", "BORORENEW", "DCMSHRIRAM", "EIDPARRY",
     "FINEORG", "GHCL", "GNFC", "GOCLCORP", "GRAPHITE", "GRAVITA",
@@ -106,8 +110,8 @@ def compute_metrics(symbol, candles_df):
     """Compute all indicators from a daily OHLCV DataFrame."""
     if candles_df is None or len(candles_df) < 220:
         return None
-    close = candles_df["Close"].squeeze().dropna() if isinstance(candles_df["Close"], pd.Series) else candles_df["Close"].iloc[:, 0].dropna()
-    volume = candles_df["Volume"].squeeze().dropna() if isinstance(candles_df["Volume"], pd.Series) else candles_df["Volume"].iloc[:, 0].dropna()
+    close = candles_df["Close"].squeeze().dropna() if isinstance(candles_df["Close"], pd.DataFrame) else candles_df["Close"].dropna()
+    volume = candles_df["Volume"].squeeze().dropna() if isinstance(candles_df["Volume"], pd.DataFrame) else candles_df["Volume"].dropna()
     if len(close) < 220 or len(volume) < 30:
         return None
     current = float(close.iloc[-1])
@@ -189,20 +193,31 @@ def compute_metrics(symbol, candles_df):
 
 
 def handler(request):
-    """Vercel Python serverless function entry point."""
+    """Vercel Python serverless function entry point.
+
+    Args:
+        request: Vercel passes a dict with 'url', 'method', 'body', 'headers'
+
+    Returns:
+        dict with 'statusCode', 'headers', 'body'
+    """
     try:
         # Parse query params
-        from urllib.parse import parse_qs
+        from urllib.parse import parse_qs, urlparse
         url = request.get("url", "") if isinstance(request, dict) else str(request)
-        params = parse_qs(url.split("?")[1]) if "?" in url else {}
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
         top_n = max(1, min(50, int(params.get("topN", ["10"])[0])))
         rsi_min = float(params.get("rsiMin", ["50"])[0])
         mcap_min_cr = float(params.get("mcapMin", ["200"])[0])
         vol_min = float(params.get("volMin", ["20000"])[0])
 
+        # Download OHLCV for the entire universe in one yfinance call
         tickers = [f"{s}.NS" for s in UNIVERSE]
         raw = yf.download(tickers, period="1y", group_by="ticker",
                          threads=True, progress=False, auto_adjust=False)
+
+        # Compute indicators per stock
         metrics = []
         for sym in UNIVERSE:
             try:
@@ -218,6 +233,7 @@ def handler(request):
             except Exception:
                 continue
 
+        # Apply technical + volume filter
         passed_tech = [m for m in metrics
                        if m["currentPrice"] > m["dma200"]
                        and m["currentPrice"] > m["dma50"]
@@ -226,7 +242,7 @@ def handler(request):
                        and m["avgVolume30d"] > vol_min
                        and m["ret6mPct"] is not None]
 
-        import time as _time
+        # Fetch market cap + sector sequentially (with throttle to avoid rate limits)
         out = []
         for i, m in enumerate(passed_tech):
             try:
@@ -243,11 +259,13 @@ def handler(request):
                     "industry": info.get("industry") or "—",
                     "marketCapCr": float(mc) / 1e7,
                 })
+                # Small delay every 10 stocks to avoid Yahoo rate limits
                 if i > 0 and i % 10 == 0:
-                    _time.sleep(0.3)
+                    time.sleep(0.3)
             except Exception:
                 continue
 
+        # Apply market cap filter
         out = [s for s in out if s["marketCapCr"] > mcap_min_cr]
         out.sort(key=lambda x: x["ret6mPct"], reverse=True)
         out = out[:top_n]

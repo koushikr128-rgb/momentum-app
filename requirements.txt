@@ -1,4 +1,5 @@
 # Requirements for Vercel Python serverless functions
+# Vercel will install these automatically when deploying
 yfinance
 pandas
 numpy

@@ -1,6 +1,7 @@
-# Vercel Python serverless function — Stop-Loss Monitor
-# Deployed at: https://your-app.vercel.app/api/stops.py
-
+"""
+Vercel Python serverless function — Stop-Loss Monitor
+Deployed at: https://your-app.vercel.app/api/stops.py
+"""
 import json
 import sys
 import yfinance as yf
@@ -15,7 +16,7 @@ def handler(request):
         payload = json.loads(body) if isinstance(body, str) else body
         allocation = payload.get("allocation", [])
 
-        if not allocation or len(allocation) < 1:
+        if not allocation:
             return {
                 "statusCode": 400,
                 "headers": {"Content-Type": "application/json"},
