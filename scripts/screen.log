@@ -1,0 +1,85 @@
+2026-09-28 07:04:54,928 [INFO] Universe size: 372 unique NSE symbols
+2026-09-28 07:04:54,928 [INFO] === Nifty Momentum Screen started at 2026-09-28T07:04:54 ===
+2026-09-28 07:04:54,928 [INFO] Downloading ~18 months of daily OHLCV for 372 NSE stocks...
+2026-09-28 07:04:56,042 [ERROR] $ZOMATO.NS: No data found, symbol may be delisted
+2026-09-28 07:04:56,278 [ERROR] HTTP Error 404: {"quoteSummary":{"result":null,"error":{"code":"Not Found","description":"Quote not found for symbol: FINOLEX.NS"}}}
+2026-09-28 07:04:56,575 [ERROR] $FINOLEX.NS: No data found, symbol may be delisted
+2026-09-28 07:04:56,641 [ERROR] $DHAMPURSUGAR.NS: No data found, symbol may be delisted
+2026-09-28 07:04:57,547 [ERROR] $CLASSIC.NS: No data found, symbol may be delisted
+2026-09-28 07:04:58,110 [ERROR] $PRIYA.NS: No data found, symbol may be delisted
+2026-09-28 07:04:59,058 [ERROR] $AREAL.NS: No data found, symbol may be delisted
+2026-09-28 07:04:59,984 [ERROR] $OILCORP.NS: No data found, symbol may be delisted
+2026-09-28 07:05:00,720 [ERROR] $MAHINDRA.NS: No data found, symbol may be delisted
+2026-09-28 07:05:01,890 [ERROR] $HINDMOTORS.NS: possibly delisted; no price data found  (period=18mo)
+2026-09-28 07:05:02,064 [ERROR] $TILAKNEG.NS: No data found, symbol may be delisted
+2026-09-28 07:05:02,781 [ERROR] $ICICISEC.NS: No data found, symbol may be delisted
+2026-09-28 07:05:03,430 [ERROR] $COCHIN-SHIP.NS: No data found, symbol may be delisted
+2026-09-28 07:05:03,731 [ERROR] $ BRIGADE.NS: No data found, symbol may be delisted
+2026-09-28 07:05:04,265 [ERROR] $JSPL.NS: No data found, symbol may be delisted
+2026-09-28 07:05:04,415 [ERROR] $CHEMPLAST.NS: No data found, symbol may be delisted
+2026-09-28 07:05:05,578 [ERROR] $SHREEENU.NS: No data found, symbol may be delisted
+2026-09-28 07:05:05,655 [ERROR] $STOVE.NS: No data found, symbol may be delisted
+2026-09-28 07:05:06,250 [ERROR] $TATAMOTORS.NS: No data found, symbol may be delisted
+2026-09-28 07:05:07,259 [ERROR] $AREVA.NS: No data found, symbol may be delisted
+2026-09-28 07:05:07,261 [ERROR] $GMRINFRA.NS: No data found, symbol may be delisted
+2026-09-28 07:05:08,246 [ERROR] $HAPPY.NS: No data found, symbol may be delisted
+2026-09-28 07:05:08,890 [ERROR] $DHAMPUR.NS: No data found, symbol may be delisted
+2026-09-28 07:05:09,755 [ERROR] $AVAILITY.NS: No data found, symbol may be delisted
+2026-09-28 07:05:10,847 [ERROR] $UNITED-SPIRITS.NS: No data found, symbol may be delisted
+2026-09-28 07:05:11,382 [ERROR] $IIFLSEC.NS: No data found, symbol may be delisted
+2026-09-28 07:05:11,957 [ERROR] $BALAMLIPRI.NS: No data found, symbol may be delisted
+2026-09-28 07:05:12,399 [ERROR] $GUJGASLTD.NS: No data found, symbol may be delisted
+2026-09-28 07:05:13,018 [ERROR] $KOLTE.NS: No data found, symbol may be delisted
+2026-09-28 07:05:13,193 [ERROR] $LTIM.NS: No data found, symbol may be delisted
+2026-09-28 07:05:14,098 [ERROR] $ATALEENTER.NS: No data found, symbol may be delisted
+2026-09-28 07:05:14,534 [ERROR] $CAPLI.NS: No data found, symbol may be delisted
+2026-09-28 07:05:15,386 [ERROR] $MAHSCFIN.NS: No data found, symbol may be delisted
+2026-09-28 07:05:16,263 [ERROR] $EPIQ.NS: No data found, symbol may be delisted
+2026-09-28 07:05:16,717 [ERROR] $INDUS TOWER.NS: No data found, symbol may be delisted
+2026-09-28 07:05:18,259 [ERROR] $INVERTERS.NS: No data found, symbol may be delisted
+2026-09-28 07:05:18,438 [ERROR] $MCDOWELL-N.NS: No data found, symbol may be delisted
+2026-09-28 07:05:20,497 [ERROR] $SHREYAS.NS: No data found, symbol may be delisted
+2026-09-28 07:05:20,987 [ERROR] $BHARTIHEX.NS: No data found, symbol may be delisted
+2026-09-28 07:05:21,556 [ERROR] $AKZOIND.NS: No data found, symbol may be delisted
+2026-09-28 07:05:21,911 [ERROR] $NATURALCAPS.NS: No data found, symbol may be delisted
+2026-09-28 07:05:22,455 [ERROR] $ARVINDFSL.NS: No data found, symbol may be delisted
+2026-09-28 07:05:23,975 [ERROR] $UTIASSET.NS: No data found, symbol may be delisted
+2026-09-28 07:05:24,083 [ERROR] $IREDI.NS: No data found, symbol may be delisted
+2026-09-28 07:05:24,512 [ERROR] $SONATCS.NS: No data found, symbol may be delisted
+2026-09-28 07:05:26,391 [ERROR] $ACRYSIL.NS: No data found, symbol may be delisted
+2026-09-28 07:05:27,253 [ERROR] $ABGSHIP.NS: No data found, symbol may be delisted
+2026-09-28 07:05:28,970 [ERROR] $BLUESTAR.NS: No data found, symbol may be delisted
+2026-09-28 07:05:29,272 [ERROR] $TATACOFFEE.NS: No data found, symbol may be delisted
+2026-09-28 07:05:29,276 [ERROR] $KIRLOSKAR.NS: No data found, symbol may be delisted
+2026-09-28 07:05:29,602 [ERROR] $METROPOLISHEALTH.NS: No data found, symbol may be delisted
+2026-09-28 07:05:29,605 [ERROR] $TIPSIND.NS: No data found, symbol may be delisted
+2026-09-28 07:05:30,109 [ERROR] $CLED.NS: No data found, symbol may be delisted
+2026-09-28 07:05:30,111 [ERROR] $INOXLEISUR.NS: No data found, symbol may be delisted
+2026-09-28 07:05:30,777 [ERROR] $CAMSONLINE.NS: No data found, symbol may be delisted
+2026-09-28 07:05:31,906 [ERROR] $GEPIL.NS: No data found, symbol may be delisted
+2026-09-28 07:05:32,453 [ERROR] $BERGERPAINT.NS: No data found, symbol may be delisted
+2026-09-28 07:05:33,097 [ERROR] $SHREE RENUKA.NS: No data found, symbol may be delisted
+2026-09-28 07:05:33,660 [ERROR] $MACMILLAN.NS: No data found, symbol may be delisted
+2026-09-28 07:05:34,910 [ERROR] $BANNARI.NS: No data found, symbol may be delisted
+2026-09-28 07:05:34,913 [ERROR] 
+59 Failed downloads:
+2026-09-28 07:05:34,914 [ERROR] ['ZOMATO.NS', 'FINOLEX.NS', 'DHAMPURSUGAR.NS', 'CLASSIC.NS', 'PRIYA.NS', 'AREAL.NS', 'OILCORP.NS', 'MAHINDRA.NS', 'TILAKNEG.NS', 'ICICISEC.NS', 'COCHIN-SHIP.NS', ' BRIGADE.NS', 'JSPL.NS', 'CHEMPLAST.NS', 'SHREEENU.NS', 'STOVE.NS', 'TATAMOTORS.NS', 'AREVA.NS', 'GMRINFRA.NS', 'HAPPY.NS', 'DHAMPUR.NS', 'AVAILITY.NS', 'UNITED-SPIRITS.NS', 'IIFLSEC.NS', 'BALAMLIPRI.NS', 'GUJGASLTD.NS', 'KOLTE.NS', 'LTIM.NS', 'ATALEENTER.NS', 'CAPLI.NS', 'MAHSCFIN.NS', 'EPIQ.NS', 'INDUS TOWER.NS', 'INVERTERS.NS', 'MCDOWELL-N.NS', 'SHREYAS.NS', 'BHARTIHEX.NS', 'AKZOIND.NS', 'NATURALCAPS.NS', 'ARVINDFSL.NS', 'UTIASSET.NS', 'IREDI.NS', 'SONATCS.NS', 'ACRYSIL.NS', 'ABGSHIP.NS', 'BLUESTAR.NS', 'TATACOFFEE.NS', 'KIRLOSKAR.NS', 'METROPOLISHEALTH.NS', 'TIPSIND.NS', 'CLED.NS', 'INOXLEISUR.NS', 'CAMSONLINE.NS', 'GEPIL.NS', 'BERGERPAINT.NS', 'SHREE RENUKA.NS', 'MACMILLAN.NS', 'BANNARI.NS']: No data found, symbol may be delisted
+2026-09-28 07:05:34,914 [ERROR] ['HINDMOTORS.NS']: possibly delisted; no price data found  (period=18mo)
+2026-09-28 07:05:35,060 [INFO] Downloaded. DataFrame shape: (375, 2232)
+2026-09-28 07:05:36,116 [INFO] Indicators computed for 312 stocks (60 skipped due to insufficient data)
+2026-09-28 07:05:36,119 [INFO] After technical+volume filter: 17 / 312 stocks pass
+2026-09-28 07:05:36,119 [INFO] Fetching market cap + sector for 17 stocks via .info...
+2026-09-28 07:05:39,185 [INFO] After market-cap filter (>500 Cr): 17 / 17 stocks pass
+2026-09-28 07:05:39,186 [INFO] Final Top 10 stocks:
+2026-09-28 07:05:39,186 [INFO]   #1 RAYMOND — 6M ret=245.52%  RSI=85.6  MCap=₹8066Cr
+2026-09-28 07:05:39,186 [INFO]   #2 WELCORP — 6M ret=229.83%  RSI=60.2  MCap=₹71981Cr
+2026-09-28 07:05:39,187 [INFO]   #3 FILATEX — 6M ret=198.92%  RSI=74.4  MCap=₹4894Cr
+2026-09-28 07:05:39,187 [INFO]   #4 LAURUSLABS — 6M ret=93.16%  RSI=63.4  MCap=₹108430Cr
+2026-09-28 07:05:39,187 [INFO]   #5 TARSONS — 6M ret=85.65%  RSI=55.2  MCap=₹1777Cr
+2026-09-28 07:05:39,187 [INFO]   #6 GMMPFAUDLR — 6M ret=77.55%  RSI=77.4  MCap=₹6734Cr
+2026-09-28 07:05:39,187 [INFO]   #7 FINCABLES — 6M ret=77.10%  RSI=58.0  MCap=₹21670Cr
+2026-09-28 07:05:39,187 [INFO]   #8 WOCKPHARMA — 6M ret=74.75%  RSI=58.1  MCap=₹35951Cr
+2026-09-28 07:05:39,187 [INFO]   #9 DIVISLAB — 6M ret=60.37%  RSI=63.3  MCap=₹253164Cr
+2026-09-28 07:05:39,187 [INFO]   #10 AETHER — 6M ret=54.17%  RSI=60.9  MCap=₹22833Cr
+2026-09-28 07:05:39,444 [INFO] Excel written: /home/z/my-project/download/nifty_momentum_screen_2026-09-28.xlsx
+2026-09-28 07:05:39,444 [INFO] Total elapsed: 44.5 s
