@@ -122,6 +122,7 @@ export default function Home() {
   const [stops, setStops] = useState<StopsResponse | null>(null);
   const [stress, setStress] = useState<StressResponse | null>(null);
   const [totalInvestment, setTotalInvestment] = useState(200000);
+  const [topN, setTopN] = useState(10);  // ← NEW: customizable portfolio size
   const [allocDirty, setAllocDirty] = useState(false);
 
   // Auto-refresh state
@@ -149,16 +150,17 @@ export default function Home() {
     setNotifPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
   }, []);
 
-  const runScreen = useCallback(async (silent = false) => {
+  const runScreen = useCallback(async (silent = false, topNOverride?: number) => {
     if (!silent) setRunning("screen");
     try {
-      const res = await fetch("/api/screen", { cache: "no-store" });
+      const n = topNOverride ?? topN;
+      const res = await fetch(`/api/screen?topN=${n}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`Screen failed (${res.status})`);
       const data: ScreenResponse = await res.json();
       setScreen(data);
       setAllocDirty(true);
       if (!silent) {
-        toast({ title: "Screen complete", description: `${data.top10.length} stocks in Top 10 — ${(data.elapsedMs / 1000).toFixed(1)}s` });
+        toast({ title: "Screen complete", description: `${data.top10.length} stocks in Top ${n} — ${(data.elapsedMs / 1000).toFixed(1)}s` });
       }
       return data;
     } catch (e) {
@@ -167,7 +169,7 @@ export default function Home() {
     } finally {
       setRunning(null);
     }
-  }, []);
+  }, [topN]);
 
   const runAllocation = useCallback(async (silent = false) => {
     if (!screen) return;
@@ -535,6 +537,29 @@ export default function Home() {
               <RefreshCw className={`w-3 h-3 sm:mr-1 ${running === "screen" ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">{running === "screen" ? "Running…" : "Run Screen"}</span>
             </Button>
+            {/* Top N selector — pick portfolio size (5/10/15/20/25/30 stocks) */}
+            <div className="flex items-center gap-1">
+              <Label htmlFor="topn-select" className="text-[10px] text-muted-foreground hidden sm:inline">Top</Label>
+              <Select value={String(topN)} onValueChange={(v) => {
+                const newN = Number(v);
+                setTopN(newN);
+                // Auto-run screen with new N if user has already run it once
+                if (screen) {
+                  toast({ title: `Switching to Top ${newN}`, description: "Re-running screen…" });
+                  runScreen(false, newN);
+                }
+              }}>
+                <SelectTrigger id="topn-select" className="h-7 w-[52px] text-[11px] px-1.5 py-0 gap-0.5">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[5, 10, 15, 20, 25, 30].map((n) => (
+                    <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Label htmlFor="topn-select" className="text-[10px] text-muted-foreground hidden sm:inline">stocks</Label>
+            </div>
           </div>
         </div>
       </header>
@@ -572,7 +597,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -654,7 +679,7 @@ export default function Home() {
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running }: { screen: ScreenResponse | null; running: boolean }) {
+function ScreenPanel({ screen, running, topN }: { screen: ScreenResponse | null; running: boolean; topN: number }) {
   if (running && !screen) return <Skeleton className="h-96 w-full" />;
   if (!screen) {
     return (
@@ -675,7 +700,7 @@ function ScreenPanel({ screen, running }: { screen: ScreenResponse | null; runni
               <li>RSI(14) &gt; 55</li>
               <li>Market Cap &gt; ₹500 Cr</li>
               <li>30-day Avg Volume &gt; 50,000</li>
-              <li><b>Sort</b>: 6-Month Price Return % DESC, top 10</li>
+              <li><b>Sort</b>: 6-Month Price Return % DESC, top {topN}</li>
             </ul>
           </div>
         </CardContent>
@@ -695,7 +720,7 @@ function ScreenPanel({ screen, running }: { screen: ScreenResponse | null; runni
       {/* Top 10 table */}
       <Card className="card-pastel">
         <CardHeader>
-          <CardTitle>Top 10 Momentum Stocks</CardTitle>
+          <CardTitle>Top {screen.top10.length} Momentum Stocks</CardTitle>
           <CardDescription>
             Ranked by 6-month price return % · Screen took {(screen.elapsedMs / 1000).toFixed(1)}s · as of {new Date(screen.runAt).toLocaleString("en-IN")}
           </CardDescription>
@@ -773,7 +798,7 @@ function AllocationPanel({
       <Card className="card-pastel">
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Wallet className="w-5 h-5 text-primary" /> Investment Amount</CardTitle>
-          <CardDescription>Enter your total capital to allocate across the Top 10 momentum stocks.</CardDescription>
+          <CardDescription>Enter your total capital to allocate across the Top {screen?.top10.length ?? topN} momentum stocks.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col sm:flex-row sm:items-end gap-3">

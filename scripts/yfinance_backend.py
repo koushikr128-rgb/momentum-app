@@ -139,7 +139,7 @@ def compute_metrics(symbol, candles_df):
     }
 
 
-def cmd_screen():
+def cmd_screen(top_n: int = 10):
     tickers = [f"{s}.NS" for s in UNIVERSE]
     raw = yf.download(tickers, period="18mo", group_by="ticker",
                      threads=True, progress=False, auto_adjust=False)
@@ -184,7 +184,7 @@ def cmd_screen():
         except Exception:
             continue
     out.sort(key=lambda x: x["ret6mPct"], reverse=True)
-    out = out[:10]
+    out = out[:top_n]
     for i, s in enumerate(out):
         s["rank"] = i + 1
     print(json.dumps({
@@ -269,7 +269,14 @@ def cmd_stops(payload):
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "screen"
     if cmd == "screen":
-        cmd_screen()
+        # Optional second argument: top_n (default 10)
+        top_n = 10
+        if len(sys.argv) > 2:
+            try:
+                top_n = max(1, min(50, int(sys.argv[2])))  # clamp 1-50
+            except ValueError:
+                pass
+        cmd_screen(top_n=top_n)
     elif cmd == "stops":
         payload = json.loads(sys.argv[2])
         cmd_stops(payload)
