@@ -138,6 +138,21 @@ async function tryVercelPython(topN: number, rsiMin: number, mcapMin: number, vo
 
 async function tryLocalPython(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
   try {
+    // Auto-install yfinance if missing (sandbox venv resets between sessions)
+    const { stdout: checkOut } = await execFileAsync(
+      PYTHON, ["-c", "import yfinance"],
+      { timeout: 10_000 }
+    ).catch(() => ({ stdout: "", stderr: "import failed" }));
+
+    if (!checkOut && checkOut !== undefined) {
+      // yfinance import failed — install it
+      console.log("[screen] yfinance missing, auto-installing...");
+      await execFileAsync(
+        PYTHON, ["-m", "pip", "install", "yfinance", "pandas", "numpy", "--quiet"],
+        { timeout: 120_000 }
+      );
+    }
+
     const filtersJson = JSON.stringify({ rsi_min: rsiMin, mcap_min_cr: mcapMin, vol_min: volMin });
     const { stdout } = await execFileAsync(
       PYTHON,
