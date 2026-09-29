@@ -72,8 +72,8 @@ async function yfFetch(path: string): Promise<Response | null> {
         continue;
       }
       await new Promise((r) => setTimeout(r, 200));
-    } catch (e) {
-      console.log(`[yfFetch] error: ${e instanceof Error ? e.message : "unknown"}`);
+    } catch {
+      // network error → try other host
     }
   }
   return null;
@@ -90,20 +90,14 @@ export async function fetchDailyCandles(
   const symbol = rawSymbol.endsWith(".NS") ? rawSymbol : `${rawSymbol}.NS`;
   const path = `/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
   const res = await yfFetch(path);
-  console.log(`[fetchDailyCandles] ${symbol} range=${range} yfFetch=${res ? "ok" : "null"}`);
   if (!res) return null;
   try {
     const data = (await res.json()) as YahooChartResponse;
-    console.log(`[fetchDailyCandles] ${symbol} chart.result exists: ${!!data?.chart?.result?.[0]}`);
-    if (!data?.chart?.result?.[0]) {
-      console.log(`[fetchDailyCandles] ${symbol} chart error:`, JSON.stringify(data?.chart?.error));
-      return null;
-    }
+    if (!data?.chart?.result?.[0]) return null;
 
     const result = data.chart.result[0];
     const q = result.indicators.quote[0];
     const tsArr = result.timestamp;
-    console.log(`[fetchDailyCandles] ${symbol} tsArr.length=${tsArr?.length} quote exists: ${!!q}`);
 
     const candles: Candle[] = [];
     for (let i = 0; i < tsArr.length; i++) {
