@@ -40,6 +40,12 @@ type ScreenResponse = {
   cached?: boolean;
 };
 
+type ScreenChange = {
+  date: string;          // ISO timestamp when the change was detected
+  added: Array<{ symbol: string; ret6mPct: number }>;
+  removed: string[];     // just symbols (we don't have full data for removed stocks)
+};
+
 type RemovedStock = {
   symbol: string;
   sector: string;
@@ -170,6 +176,7 @@ export default function Home() {
 
   const [screen, setScreen] = useState<ScreenResponse | null>(null);
   const [prevScreenSymbols, setPrevScreenSymbols] = useState<string[] | null>(null);
+  const [changeHistory, setChangeHistory] = useState<ScreenChange[]>([]);
   const screenRef = useRef<ScreenResponse | null>(null);
   const [alloc, setAlloc] = useState<AllocateResponse | null>(null);
   const [stops, setStops] = useState<StopsResponse | null>(null);
@@ -217,6 +224,24 @@ export default function Home() {
     setNotifPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
   }, []);
 
+  // Load change history from localStorage on mount (persists across sessions)
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("nifty_change_history");
+      if (stored) {
+        const parsed = JSON.parse(stored) as ScreenChange[];
+        if (Array.isArray(parsed)) setChangeHistory(parsed);
+      }
+    } catch { /* ignore parse errors */ }
+  }, []);
+
+  // Save change history to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem("nifty_change_history", JSON.stringify(changeHistory.slice(-20)));
+    } catch { /* storage full or unavailable */ }
+  }, [changeHistory]);
+
   const runScreen = useCallback(async (silent = false, topNOverride?: number, filtersOverride?: typeof filters) => {
     setRunning("screen");  // always set running state so loading indicator shows
     try {
@@ -233,8 +258,24 @@ export default function Home() {
       const data: ScreenResponse = await res.json();
       // Track previous screen symbols for change detection (using ref to avoid stale closure)
       const prev = screenRef.current;
-      if (prev && prev.top10.length > 0) {
-        setPrevScreenSymbols(prev.top10.map((s) => s.symbol));
+      if (prev && prev.top10.length > 0 && data.top10.length > 0) {
+        const prevSyms = prev.top10.map((s) => s.symbol);
+        const currentSyms = data.top10.map((s) => s.symbol);
+        const added = currentSyms.filter((s) => !prevSyms.includes(s));
+        const removed = prevSyms.filter((s) => !currentSyms.includes(s));
+        // Only record if there are actual changes
+        if (added.length > 0 || removed.length > 0) {
+          const change: ScreenChange = {
+            date: new Date().toISOString(),
+            added: added.map((sym) => {
+              const stock = data.top10.find((s) => s.symbol === sym);
+              return { symbol: sym, ret6mPct: stock?.ret6mPct ?? 0 };
+            }),
+            removed,
+          };
+          setChangeHistory((prev) => [...prev, change].slice(-20));
+        }
+        setPrevScreenSymbols(prevSyms);
       }
       screenRef.current = data;
       setScreen(data);
@@ -830,7 +871,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -917,7 +958,7 @@ export default function Home() {
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null }) {
+function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void }) {
   if (running && !screen) {
     const elapsed = elapsedMs ? (elapsedMs / 1000).toFixed(1) : "0.0";
     const pct = Math.min(95, (elapsedMs || 0) / 300); // ~30s estimated total
@@ -1023,60 +1064,78 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
         <StatCard icon={<Wallet className="w-4 h-4" />} label="Pass market cap" value={String(screen.passedMc)} sub="> ₹500 Cr" tone="emerald" />
       </div>
 
-      {/* Changes since last refresh — shows stocks added/removed from Top N */}
-      {prevScreenSymbols && prevScreenSymbols.length > 0 && screen.top10.length > 0 && (() => {
-        const currentSymbols = screen.top10.map((s) => s.symbol);
-        const added = currentSymbols.filter((s) => !prevScreenSymbols.includes(s));
-        const removed = prevScreenSymbols.filter((s) => !currentSymbols.includes(s));
-        if (added.length === 0 && removed.length === 0) return null;
-        const addedStocks = added.map((sym) => screen.top10.find((s) => s.symbol === sym)).filter(Boolean);
-        return (
-          <Card className="card-pastel">
-            <CardContent className="p-4">
-              <div className="flex items-start gap-3">
-                <GitCompare className="w-5 h-5 text-primary shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground">Changes since last refresh</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5 mb-3">
-                    Compared to your previous screen — new qualifiers entered, some dropped out
-                  </p>
-                  <div className="space-y-3">
-                    {addedStocks.length > 0 && (
-                      <div>
-                        <p className="text-[10px] font-semibold text-emerald-600 mb-1.5 uppercase tracking-wide">
-                          ↑ Added ({addedStocks.length})
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {addedStocks.map((s) => (
-                            <span key={s!.symbol} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium pastel-positive">
-                              {s!.symbol}
-                              <span className="opacity-60">+{s!.ret6mPct.toFixed(0)}% 6M</span>
+      {/* Change History — shows when stocks were added/removed with dates */}
+      {changeHistory && changeHistory.length > 0 && (
+        <Card className="card-pastel">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <History className="w-4 h-4 text-primary" /> Change History
+              </CardTitle>
+              <CardDescription className="text-[10px] mt-0.5">
+                When stocks entered or left your Top {topN} · persisted across sessions
+              </CardDescription>
+            </div>
+            {onClearHistory && (
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground" onClick={onClearHistory}>
+                Clear
+              </Button>
+            )}
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="space-y-3 max-h-72 overflow-y-auto scroll-pastel">
+              {/* Show most recent first */}
+              {[...changeHistory].reverse().slice(0, 10).map((change, idx) => {
+                const date = new Date(change.date);
+                const dateStr = date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+                const timeStr = date.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+                const isMostRecent = idx === 0;
+                return (
+                  <div key={change.date} className={`p-3 rounded-lg border ${isMostRecent ? "border-primary/30 bg-primary/5" : "border-border/40"}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded ${isMostRecent ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                          {dateStr}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground tabular-nums">{timeStr}</span>
+                        {isMostRecent && <span className="text-[9px] font-semibold text-primary uppercase tracking-wide">Latest</span>}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">
+                        {change.added.length > 0 || change.removed.length > 0
+                          ? `${change.added.length} added · ${change.removed.length} removed`
+                          : "No changes"}
+                      </span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {change.added.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-[9px] font-semibold text-emerald-600 mr-1">↑</span>
+                          {change.added.map((s) => (
+                            <span key={s.symbol} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium pastel-positive">
+                              {s.symbol}
+                              <span className="opacity-60">+{s.ret6mPct.toFixed(0)}%</span>
                             </span>
                           ))}
                         </div>
-                      </div>
-                    )}
-                    {removed.length > 0 && (
-                      <div>
-                        <p className="text-[10px] font-semibold text-red-600 mb-1.5 uppercase tracking-wide">
-                          ↓ Removed ({removed.length})
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {removed.map((sym) => (
-                            <span key={sym} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium pastel-negative line-through opacity-70">
+                      )}
+                      {change.removed.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-[9px] font-semibold text-red-600 mr-1">↓</span>
+                          {change.removed.map((sym) => (
+                            <span key={sym} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium pastel-negative line-through opacity-70">
                               {sym}
                             </span>
                           ))}
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })()}
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Top 10 table */}
       <Card className="card-pastel">
