@@ -102,6 +102,25 @@ UNIVERSE = [
 ]
 UNIVERSE = list(dict.fromkeys(UNIVERSE))
 
+# Override with CSV universe if available (750 stocks vs 276 hardcoded)
+import csv as _csv2
+import os as _os2
+_CSV_PATH = "/home/z/my-project/data/nifty750.csv"
+if _os2.path.exists(_CSV_PATH):
+    try:
+        _csv_symbols = []
+        with open(_CSV_PATH, "r", encoding="utf-8-sig") as _f2:
+            _reader2 = _csv2.DictReader(_f2)
+            for _row2 in _reader2:
+                _s = (_row2.get("Symbol") or "").strip()
+                if _s:
+                    _csv_symbols.append(_s)
+        if len(_csv_symbols) > 100:
+            UNIVERSE = list(dict.fromkeys(_csv_symbols))
+            print(f"Loaded {len(UNIVERSE)} symbols from CSV", file=sys.stderr)
+    except Exception:
+        pass
+
 
 def compute_metrics(symbol, candles_df):
     if candles_df is None or len(candles_df) < 220:
@@ -206,8 +225,8 @@ def cmd_screen(top_n: int = 10, filters: dict | None = None):
     raw = None
     for attempt in range(3):
         try:
-            raw = yf.download(tickers, period="14mo", group_by="ticker",
-                             threads=True, progress=False, auto_adjust=False)
+            raw = yf.download(tickers, period="1y", group_by="ticker",
+                             threads=False, progress=False, auto_adjust=False)
             # Check if we got meaningful data (not all NaN)
             if raw is not None and len(raw) > 100:
                 break
@@ -253,32 +272,74 @@ def cmd_screen(top_n: int = 10, filters: dict | None = None):
                    and m["avgVolume30d"] > vol_min
                    and m["ret6mPct"] is not None]
 
-    # Fetch market cap + sector via yfinance .info (sequential with small delay to avoid rate limits)
-    # Was parallel with 8 workers — caused Yahoo 429 rate-limit errors.
-    # Sequential is slower but reliable. ~0.5s per stock × 36 stocks = ~18s total.
-    import time as _time
+    # Load market cap + sector from CSV (if available) — eliminates slow .info calls
+    import csv as _csv
+    import os as _os
+
+    CSV_PATH = "/home/z/my-project/data/nifty750.csv"
+    csv_lookup = {}  # symbol → {marketCapCr, sector, longName, industry}
+    if _os.path.exists(CSV_PATH):
+        try:
+            with open(CSV_PATH, "r", encoding="utf-8-sig") as _f:
+                _reader = _csv.DictReader(_f)
+                for _row in _reader:
+                    _sym = (_row.get("Symbol") or "").strip()
+                    if not _sym:
+                        continue
+                    _mc_raw = (_row.get("Market Capital (? Cr)") or "").replace("?", "").replace(",", "").replace("₹", "").strip()
+                    try:
+                        _mc = float(_mc_raw)
+                    except (ValueError, TypeError):
+                        _mc = 0
+                    _sector = (_row.get("Industry") or "—").strip()
+                    _name = (_row.get("Company Name") or _sym).strip()
+                    csv_lookup[_sym] = {
+                        "marketCapCr": _mc,
+                        "sector": _sector,
+                        "longName": _name,
+                        "industry": _sector,
+                    }
+        except Exception:
+            pass
 
     out = []
-    for i, m in enumerate(passed_tech):
-        try:
-            t = yf.Ticker(f"{m['symbol']}.NS")
-            info = t.info or {}
-            mc = info.get("marketCap")
-            if mc is None:
+    if csv_lookup:
+        # Use CSV data — instant, no Yahoo .info calls needed
+        for m in passed_tech:
+            csv_data = csv_lookup.get(m["symbol"])
+            if not csv_data:
                 continue
-            long_name = info.get("longName") or info.get("shortName") or m["symbol"]
+            if csv_data["marketCapCr"] <= mcap_min_cr:
+                continue
             out.append({
                 **m,
-                "longName": long_name,
-                "sector": info.get("sector") or "—",
-                "industry": info.get("industry") or "—",
-                "marketCapCr": float(mc) / 1e7,
+                "longName": csv_data["longName"],
+                "sector": csv_data["sector"],
+                "industry": csv_data["industry"],
+                "marketCapCr": csv_data["marketCapCr"],
             })
-            # Small delay every 10 stocks to avoid rate limits
-            if i > 0 and i % 10 == 0:
-                _time.sleep(0.3)
-        except Exception:
-            continue
+    else:
+        # Fallback: fetch market cap + sector via yfinance .info (sequential)
+        import time as _time
+        for i, m in enumerate(passed_tech):
+            try:
+                t = yf.Ticker(f"{m['symbol']}.NS")
+                info = t.info or {}
+                mc = info.get("marketCap")
+                if mc is None:
+                    continue
+                long_name = info.get("longName") or info.get("shortName") or m["symbol"]
+                out.append({
+                    **m,
+                    "longName": long_name,
+                    "sector": info.get("sector") or "—",
+                    "industry": info.get("industry") or "—",
+                    "marketCapCr": float(mc) / 1e7,
+                })
+                if i > 0 and i % 10 == 0:
+                    _time.sleep(0.3)
+            except Exception:
+                continue
 
     # Filter by market cap
     out = [s for s in out if s["marketCapCr"] > mcap_min_cr]

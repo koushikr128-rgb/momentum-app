@@ -1,7 +1,7 @@
 // GET /api/screen
-// Hybrid: tries Vercel Python serverless function first (when deployed on Vercel),
+// Hybrid: tries CSV-backed TypeScript first (fastest — no Yahoo .info calls),
+// falls back to Vercel Python serverless function (when deployed on Vercel),
 // falls back to local Python execFile (in sandbox),
-// falls back to pure TypeScript (when Python not available),
 // falls back to cache.
 
 import { NextResponse } from "next/server";
@@ -12,11 +12,12 @@ import { batchFetchDailyCandles } from "@/lib/yahoo";
 import { fetchBatchQuotes } from "@/lib/yahoo-batch";
 import { computeMetrics, ScreenedStock } from "@/lib/indicators";
 import { applyTechnicalFilter } from "@/lib/strategy";
+import { getNifty750Symbols, getNifty750Map } from "@/lib/nifty750";
 
 const execFileAsync = promisify(execFile);
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 const PYTHON = "/home/z/.venv/bin/python3";
 const SCRIPT = "/home/z/my-project/scripts/yfinance_backend.py";
@@ -53,7 +54,15 @@ export async function GET(req: Request) {
     });
   }
 
-  // 2. Try Vercel Python serverless function (works when deployed on Vercel)
+  // 2. Try local Python first (uses CSV for market cap + yfinance for OHLCV — most reliable)
+  const localPyResult = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
+  if (localPyResult) {
+    cache.set(cacheKey, { data: localPyResult, ts: Date.now() });
+    lastSuccessful = { data: localPyResult, ts: Date.now() };
+    return NextResponse.json(localPyResult);
+  }
+
+  // 3. Try Vercel Python serverless function (works when deployed on Vercel)
   if (PYTHON_API_URL) {
     const pyResult = await tryVercelPython(topN, rsiMin, mcapMin, volMin, start);
     if (pyResult) {
@@ -63,15 +72,15 @@ export async function GET(req: Request) {
     }
   }
 
-  // 3. Try local Python (works in sandbox)
-  const localPyResult = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
-  if (localPyResult) {
-    cache.set(cacheKey, { data: localPyResult, ts: Date.now() });
-    lastSuccessful = { data: localPyResult, ts: Date.now() };
-    return NextResponse.json(localPyResult);
+  // 4. Try CSV-backed TypeScript (fallback if Python unavailable)
+  const csvResult = await tryCsvScreen(topN, rsiMin, mcapMin, volMin, start);
+  if (csvResult) {
+    cache.set(cacheKey, { data: csvResult, ts: Date.now() });
+    lastSuccessful = { data: csvResult, ts: Date.now() };
+    return NextResponse.json(csvResult);
   }
 
-  // 4. Try pure TypeScript (works when Yahoo isn't rate-limiting)
+  // 5. Try pure TypeScript (works when Yahoo isn't rate-limiting)
   const tsResult = await tryTypeScript(topN, rsiMin, mcapMin, volMin, start);
   if (tsResult) {
     cache.set(cacheKey, { data: tsResult, ts: Date.now() });
@@ -157,7 +166,7 @@ async function tryLocalPython(topN: number, rsiMin: number, mcapMin: number, vol
     const { stdout } = await execFileAsync(
       PYTHON,
       [SCRIPT, "screen", String(topN), filtersJson],
-      { timeout: 90_000, maxBuffer: 50 * 1024 * 1024 }
+      { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 }
     );
     const lastLine = stdout.trim().split("\n").pop();
     if (!lastLine) return null;
@@ -170,6 +179,76 @@ async function tryLocalPython(topN: number, rsiMin: number, mcapMin: number, vol
       topN,
       filters: { rsiMin, mcapMin, volMin },
       backend: "local-python",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * CSV-backed screen — uses Nifty 750 CSV for universe + market cap + sector.
+ * Only needs Yahoo for OHLCV (to compute RSI/MA/returns).
+ * Eliminates the slow .info calls that caused rate-limiting.
+ */
+async function tryCsvScreen(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
+  try {
+    // Load 750-stock universe + market cap + sector from CSV
+    const csvSymbols = await getNifty750Symbols();
+    if (csvSymbols.length === 0) return null; // CSV not available
+
+    const csvMap = await getNifty750Map();
+
+    // Download OHLCV via Yahoo v8 chart (only thing we still need Yahoo for)
+    const dataMap = await batchFetchDailyCandles(csvSymbols, "1y", 3);
+    if (dataMap.size === 0) return null; // Yahoo rate-limited
+
+    // Compute indicators for each stock
+    const metricsList = [];
+    for (const sym of csvSymbols) {
+      const data = dataMap.get(sym);
+      if (!data) continue;
+      const m = computeMetrics(sym, data.candles);
+      if (m) metricsList.push(m);
+    }
+
+    // Apply technical + volume filter
+    const techPassed = metricsList.filter((m) =>
+      applyTechnicalFilter(m) && m.rsi14 > rsiMin && m.avgVolume30d > volMin
+    );
+    if (techPassed.length === 0) return null;
+
+    // Apply market cap filter using CSV data (NO Yahoo .info calls!)
+    const screened: ScreenedStock[] = [];
+    for (const m of techPassed) {
+      const csvData = csvMap.get(m.symbol);
+      if (!csvData) continue;
+      if (csvData.marketCapCr <= mcapMin) continue;
+      screened.push({
+        ...m,
+        longName: csvData.longName,
+        sector: csvData.sector,
+        industry: csvData.industry,
+        marketCapCr: csvData.marketCapCr,
+        rank: 0,
+      });
+    }
+
+    // Sort by 6M return DESC, take top N
+    screened.sort((a, b) => b.ret6mPct - a.ret6mPct);
+    const top10 = screened.slice(0, topN).map((s, i) => ({ ...s, rank: i + 1 }));
+
+    return {
+      universeSize: csvSymbols.length,
+      passedData: metricsList.length,
+      passedTech: techPassed.length,
+      passedMc: screened.length,
+      top10,
+      runAt: new Date().toISOString(),
+      elapsedMs: Date.now() - start,
+      cached: false,
+      topN,
+      filters: { rsiMin, mcapMin, volMin },
+      backend: "csv-typescript",
     };
   } catch {
     return null;
