@@ -169,6 +169,8 @@ export default function Home() {
   const [running, setRunning] = useState<"screen" | "stops" | null>(null);
 
   const [screen, setScreen] = useState<ScreenResponse | null>(null);
+  const [prevScreenSymbols, setPrevScreenSymbols] = useState<string[] | null>(null);
+  const screenRef = useRef<ScreenResponse | null>(null);
   const [alloc, setAlloc] = useState<AllocateResponse | null>(null);
   const [stops, setStops] = useState<StopsResponse | null>(null);
   const [stress, setStress] = useState<StressResponse | null>(null);
@@ -229,6 +231,12 @@ export default function Home() {
       const res = await fetch(`/api/screen?${qs}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`Screen failed (${res.status})`);
       const data: ScreenResponse = await res.json();
+      // Track previous screen symbols for change detection (using ref to avoid stale closure)
+      const prev = screenRef.current;
+      if (prev && prev.top10.length > 0) {
+        setPrevScreenSymbols(prev.top10.map((s) => s.symbol));
+      }
+      screenRef.current = data;
       setScreen(data);
       setAllocDirty(true);
       if (!silent) {
@@ -822,7 +830,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -909,7 +917,7 @@ export default function Home() {
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN, filters, elapsedMs }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number }) {
+function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null }) {
   if (running && !screen) {
     const elapsed = elapsedMs ? (elapsedMs / 1000).toFixed(1) : "0.0";
     const pct = Math.min(95, (elapsedMs || 0) / 300); // ~30s estimated total
@@ -1014,6 +1022,61 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs }: { screen: Sc
         <StatCard icon={<Gauge className="w-4 h-4" />} label="Pass technical" value={String(screen.passedTech)} sub="MA + RSI + Vol" />
         <StatCard icon={<Wallet className="w-4 h-4" />} label="Pass market cap" value={String(screen.passedMc)} sub="> ₹500 Cr" tone="emerald" />
       </div>
+
+      {/* Changes since last refresh — shows stocks added/removed from Top N */}
+      {prevScreenSymbols && prevScreenSymbols.length > 0 && screen.top10.length > 0 && (() => {
+        const currentSymbols = screen.top10.map((s) => s.symbol);
+        const added = currentSymbols.filter((s) => !prevScreenSymbols.includes(s));
+        const removed = prevScreenSymbols.filter((s) => !currentSymbols.includes(s));
+        if (added.length === 0 && removed.length === 0) return null;
+        const addedStocks = added.map((sym) => screen.top10.find((s) => s.symbol === sym)).filter(Boolean);
+        return (
+          <Card className="card-pastel">
+            <CardContent className="p-4">
+              <div className="flex items-start gap-3">
+                <GitCompare className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground">Changes since last refresh</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 mb-3">
+                    Compared to your previous screen — new qualifiers entered, some dropped out
+                  </p>
+                  <div className="space-y-3">
+                    {addedStocks.length > 0 && (
+                      <div>
+                        <p className="text-[10px] font-semibold text-emerald-600 mb-1.5 uppercase tracking-wide">
+                          ↑ Added ({addedStocks.length})
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {addedStocks.map((s) => (
+                            <span key={s!.symbol} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium pastel-positive">
+                              {s!.symbol}
+                              <span className="opacity-60">+{s!.ret6mPct.toFixed(0)}% 6M</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {removed.length > 0 && (
+                      <div>
+                        <p className="text-[10px] font-semibold text-red-600 mb-1.5 uppercase tracking-wide">
+                          ↓ Removed ({removed.length})
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {removed.map((sym) => (
+                            <span key={sym} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium pastel-negative line-through opacity-70">
+                              {sym}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Top 10 table */}
       <Card className="card-pastel">
