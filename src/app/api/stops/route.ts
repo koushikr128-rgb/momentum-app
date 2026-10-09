@@ -90,7 +90,22 @@ async function tryPythonStops(alloc: AllocationStock[]) {
     );
     const lastLine = stdout.trim().split("\n").pop();
     if (!lastLine) return null;
-    return JSON.parse(lastLine);
+    const data = JSON.parse(lastLine);
+    if (!data.stops || data.stops.length === 0) return null;
+    // Enrich with summary fields that the Python backend doesn't return
+    const totalPnl = data.stops.reduce((a: number, b: { pnlRupees: number }) => a + b.pnlRupees, 0);
+    const totalInvested = data.stops.reduce((a: number, b: { rupees: number }) => a + b.rupees, 0);
+    return {
+      ...data,
+      totalPnl,
+      totalInvested,
+      pnlPct: totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0,
+      statusCounts: {
+        HOLD: data.stops.filter((s: { status: string }) => s.status === "HOLD").length,
+        WATCH: data.stops.filter((s: { status: string }) => s.status === "WATCH").length,
+        EXIT: data.stops.filter((s: { status: string }) => s.status === "EXIT").length,
+      },
+    };
   } catch {
     return null;
   }

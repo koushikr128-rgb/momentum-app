@@ -161,6 +161,11 @@ const fmt = (n: number, d = 2) =>
   isNaN(n) || n === null ? "—" : n.toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d });
 const fmtINR = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const fmtPct = (n: number) => (isNaN(n) ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(2)}%`);
+const IST = "Asia/Kolkata";
+const fmtISTTime = (d: string | Date) => new Date(d).toLocaleTimeString("en-IN", { timeZone: IST, hour: "2-digit", minute: "2-digit" });
+const fmtISTDateTime = (d: string | Date) => new Date(d).toLocaleString("en-IN", { timeZone: IST, day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+const fmtISTDate = (d: string | Date) => new Date(d).toLocaleDateString("en-IN", { timeZone: IST, day: "2-digit", month: "short", year: "numeric" });
+const fmtISTDateShort = (d: string | Date) => new Date(d).toLocaleDateString("en-IN", { timeZone: IST, day: "2-digit", month: "short" });
 
 const AUTO_REFRESH_OPTIONS = [
   { value: 15, label: "15 minutes" },
@@ -177,6 +182,8 @@ export default function Home() {
   const [screen, setScreen] = useState<ScreenResponse | null>(null);
   const [prevScreenSymbols, setPrevScreenSymbols] = useState<string[] | null>(null);
   const [changeHistory, setChangeHistory] = useState<ScreenChange[]>([]);
+  const [heldStocks, setHeldStocks] = useState<HeldStock[]>([]);
+  const heldStocksRef = useRef<HeldStock[]>([]);
   const screenRef = useRef<ScreenResponse | null>(null);
   const [alloc, setAlloc] = useState<AllocateResponse | null>(null);
   const [stops, setStops] = useState<StopsResponse | null>(null);
@@ -196,7 +203,6 @@ export default function Home() {
   const [rebalanceRunning, setRebalanceRunning] = useState(false);
 
   // Auto-load state (effect is defined AFTER runScreen below to avoid TDZ error)
-  const [autoLoadStarted, setAutoLoadStarted] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
 
   // Auto-refresh state
@@ -299,15 +305,22 @@ export default function Home() {
     }
   }, [topN, filters]);
 
-  // Auto-load on mount: kick off screen fetch immediately so user doesn't wait
+  // MANDATORY: Do NOT auto-fetch on mount. Restore from localStorage only.
+  // Screen ONLY refreshes when user clicks Run Screen, auto-refresh is ON,
+  // or user changes Top N / filters. NEVER add runScreen() here.
   useEffect(() => {
-    if (autoLoadStarted) return;
-    setAutoLoadStarted(true);
-    const start = Date.now();
-    const timer = setInterval(() => setElapsedMs(Date.now() - start), 500);
-    runScreen(true).finally(() => clearInterval(timer));
-    return () => clearInterval(timer);
+    try {
+      const s = localStorage.getItem("nifty_last_screen");
+      if (s) { const p = JSON.parse(s); if (p?.top10?.length > 0) { screenRef.current = p; setScreen(p); } }
+      const h = localStorage.getItem("nifty_held_stocks");
+      if (h) { const ph = JSON.parse(h); if (Array.isArray(ph)) { setHeldStocks(ph); heldStocksRef.current = ph; } }
+      const c = localStorage.getItem("nifty_change_history");
+      if (c) { const pc = JSON.parse(c); if (Array.isArray(pc)) setChangeHistory(pc); }
+    } catch {}
   }, []);
+  useEffect(() => { if (screen?.top10?.length > 0) try { localStorage.setItem("nifty_last_screen", JSON.stringify(screen)); } catch {} }, [screen]);
+  useEffect(() => { try { localStorage.setItem("nifty_held_stocks", JSON.stringify(heldStocks)); } catch {} }, [heldStocks]);
+  useEffect(() => { try { localStorage.setItem("nifty_change_history", JSON.stringify(changeHistory.slice(-20))); } catch {} }, [changeHistory]);
 
   const runAllocation = useCallback(async (silent = false, modeOverride?: "risk-parity" | "momentum") => {
     if (!screen) return;
@@ -437,7 +450,7 @@ export default function Home() {
     setNextRunAt(Date.now() + autoRefreshMin * 60 * 1000);
     toast({
       title: "Auto-refresh complete",
-      description: `Next refresh in ${autoRefreshMin} min · ${new Date(Date.now() + autoRefreshMin * 60 * 1000).toLocaleTimeString("en-IN")}`,
+      description: `Next refresh in ${autoRefreshMin} min · ${fmtISTTime(Date.now() + autoRefreshMin * 60 * 1000)}`,
     });
   }, [runScreen, runAllocation, autoRefreshMin, correlation]);
 
@@ -650,7 +663,7 @@ export default function Home() {
               {running === "screen" && !screen
                 ? `Loading ${elapsedMs ? (elapsedMs / 1000).toFixed(0) : 0}s…`
                 : screen
-                  ? new Date(screen.runAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+                  ? fmtISTTime(screen.runAt)
                   : "—"}
             </Badge>
             {autoRefreshOn && (
@@ -700,7 +713,7 @@ export default function Home() {
                   </p>
                   {autoRefreshOn && nextRunAt && (
                     <p className="text-xs text-primary font-medium">
-                      Next refresh at {new Date(nextRunAt).toLocaleTimeString("en-IN")}
+                      Next refresh at {fmtISTTime(nextRunAt)}
                     </p>
                   )}
                 </div>
@@ -1087,8 +1100,8 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
               {/* Show most recent first */}
               {[...changeHistory].reverse().slice(0, 10).map((change, idx) => {
                 const date = new Date(change.date);
-                const dateStr = date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-                const timeStr = date.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+                const dateStr = fmtISTDate(change.date);
+                const timeStr = fmtISTTime(change.date);
                 const isMostRecent = idx === 0;
                 return (
                   <div key={change.date} className={`p-3 rounded-lg border ${isMostRecent ? "border-primary/30 bg-primary/5" : "border-border/40"}`}>
@@ -1142,7 +1155,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
         <CardHeader>
           <CardTitle>Top {screen.top10.length} Momentum Stocks</CardTitle>
           <CardDescription>
-            Ranked by 6-month price return % · Screen took {(screen.elapsedMs / 1000).toFixed(1)}s · as of {new Date(screen.runAt).toLocaleString("en-IN")}
+            Ranked by 6-month price return % · Screen took {(screen.elapsedMs / 1000).toFixed(1)}s · as of {fmtISTDateTime(screen.runAt)}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -1474,7 +1487,7 @@ function StopLossPanel({ stops, running, onRefresh, hasAlloc, onGoToAlloc }: {
           <StatCard icon={<ShieldAlert className="w-4 h-4" />} label="HOLD" value={String(stops.statusCounts.HOLD)} sub="healthy" tone="emerald" />
           <StatCard icon={<AlertTriangle className="w-4 h-4" />} label="WATCH" value={String(stops.statusCounts.WATCH)} sub="near stop" tone="amber" />
           <StatCard icon={<TrendingDown className="w-4 h-4" />} label="EXIT" value={String(stops.statusCounts.EXIT)} sub="stop hit" tone="red" />
-          <StatCard icon={<Activity className="w-4 h-4" />} label="As of" value={new Date(stops.runAt).toLocaleTimeString("en-IN")} sub="latest NSE close" />
+          <StatCard icon={<Activity className="w-4 h-4" />} label="As of" value={fmtISTTime(stops.runAt)} sub="latest NSE close" />
         </div>
       )}
 
