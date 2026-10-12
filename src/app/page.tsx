@@ -1031,17 +1031,20 @@ export default function Home() {
                   <div className="flex-1 h-px bg-border/40" />
                 </div>
 
-                {/* Option 2: Manual token entry */}
+                {/* Option 2: Manual — paste the full redirect URL or just the token */}
                 <div>
-                  <Label className="text-xs font-medium">Manual: Paste Request Token</Label>
+                  <Label className="text-xs font-medium">Manual: Paste URL or Token</Label>
                   <p className="text-[10px] text-muted-foreground mb-2">
-                    1. Go to <a href="https://kite.trade/developer/share" target="_blank" className="text-primary underline">kite.trade/developer/share</a><br />
-                    2. Click your app → "Login" → authorize<br />
-                    3. Copy the <code>request_token</code> from the redirect URL<br />
-                    4. Paste it here
+                    1. Click this link:{" "}
+                    <a href="https://kite.zerodha.com/connect/login?api_key=mrotfrt78mmjv00p&v=3" target="_blank" className="text-primary underline">
+                      Open Zerodha Login
+                    </a><br />
+                    2. Log in and authorize<br />
+                    3. Copy the ENTIRE URL from the address bar (even if it shows an error page)<br />
+                    4. Paste it below
                   </p>
                   <Input
-                    placeholder="e.g. aBcDeFgHiJkL..."
+                    placeholder="Paste the full URL here..."
                     value={kiteToken}
                     onChange={(e) => setKiteToken(e.target.value)}
                     className="text-xs"
@@ -1054,10 +1057,23 @@ export default function Home() {
                     onClick={async () => {
                       setKiteConnecting(true);
                       try {
+                        // Extract request_token from URL or use as-is
+                        let token = kiteToken.trim();
+                        if (token.includes("request_token=")) {
+                          try {
+                            const url = new URL(token);
+                            token = url.searchParams.get("request_token") || token;
+                          } catch {
+                            // Not a valid URL, try regex
+                            const match = token.match(/request_token=([^&]+)/);
+                            if (match) token = match[1];
+                          }
+                        }
+
                         const res = await fetch("/api/zerodha/token", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ request_token: kiteToken.trim() }),
+                          body: JSON.stringify({ request_token: token }),
                         });
                         if (res.ok) {
                           setKiteConnected(true);
@@ -1073,7 +1089,7 @@ export default function Home() {
                       }
                     }}
                   >
-                    {kiteConnecting ? "Connecting..." : "Connect with Token"}
+                    {kiteConnecting ? "Connecting..." : "Connect"}
                   </Button>
                 </div>
               </div>
