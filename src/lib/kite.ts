@@ -12,7 +12,7 @@ const KITE_BASE = "https://api.kite.trade";
 const KITE_LOGIN_URL = "https://kite.zerodha.com/connect/login";
 
 // API credentials — stored in .env on Vercel, hardcoded for sandbox
-const API_KEY = process.env.KITE_API_KEY || "xo8a5tmwfovn7sru";
+const API_KEY = process.env.KITE_API_KEY || "mrotfrt78mmjv00p";
 const API_SECRET = process.env.KITE_API_SECRET || "";
 export const REDIRECT_URI =
   process.env.KITE_REDIRECT_URI ||
