@@ -684,6 +684,15 @@ export default function Home() {
                 {notifPermission === "granted" ? "On" : notifPermission === "denied" ? "Blocked" : notifPermission === "unsupported" ? "N/A" : "Alerts"}
               </span>
             </Button>
+            {/* Zerodha connect button */}
+            <a href="/api/zerodha/login">
+              <Button variant="outline" size="sm" className="h-7 px-2 text-[11px] gap-1">
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span className="hidden sm:inline">Zerodha</span>
+              </Button>
+            </a>
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant={autoRefreshOn ? "default" : "outline"} size="sm" className="h-7 px-2 text-[11px]">
