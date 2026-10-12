@@ -23,13 +23,12 @@ export const REDIRECT_URI =
  * User clicks this → logs in on Zerodha → redirected back with request_token.
  */
 export function getKiteLoginUrl(): string {
+  // Kite Connect v3: redirect URL is configured in the developer portal, NOT passed as a param
   const params = new URLSearchParams({
     api_key: API_KEY,
     v: "3",
   });
-  // Kite requires the redirect URL to match what's registered in the app settings
-  // It's sent as part of the login URL to avoid "Missing or empty field `authorize`" error
-  return `${KITE_LOGIN_URL}?${params}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`;
+  return `${KITE_LOGIN_URL}?${params}`;
 }
 
 /**
