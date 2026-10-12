@@ -206,6 +206,50 @@ export default function Home() {
   const [kiteConnecting, setKiteConnecting] = useState(false);
   const [kiteConnected, setKiteConnected] = useState(false);
 
+  // On mount: check URL for Zerodha callback token
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const zerodhaStatus = params.get("zerodha");
+      const requestToken = params.get("request_token");
+
+      if (zerodhaStatus === "token" && requestToken) {
+        // Auto-connect with the token from URL
+        setShowZerodhaDialog(true);
+        setKiteToken(requestToken);
+        setKiteConnecting(true);
+
+        fetch("/api/zerodha/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ request_token: requestToken }),
+        })
+          .then(async (res) => {
+            if (res.ok) {
+              setKiteConnected(true);
+              setKiteConnecting(false);
+              toast({ title: "Connected to Zerodha!", description: "You can now use Zerodha data source" });
+            } else {
+              const err = await res.json();
+              setKiteConnecting(false);
+              toast({ title: "Zerodha connection failed", description: err.error || "Unknown error", variant: "destructive" });
+            }
+          })
+          .catch(() => {
+            setKiteConnecting(false);
+            toast({ title: "Connection failed", description: "Network error", variant: "destructive" });
+          });
+
+        // Clean the URL (remove query params)
+        window.history.replaceState({}, "", "/");
+      } else if (zerodhaStatus === "error") {
+        setShowZerodhaDialog(true);
+        toast({ title: "Zerodha authorization failed", description: "Please try again", variant: "destructive" });
+        window.history.replaceState({}, "", "/");
+      }
+    } catch {}
+  }, []);
+
   // Auto-load state (effect is defined AFTER runScreen below to avoid TDZ error)
   const [elapsedMs, setElapsedMs] = useState(0);
 
