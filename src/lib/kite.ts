@@ -27,7 +27,9 @@ export function getKiteLoginUrl(): string {
     api_key: API_KEY,
     v: "3",
   });
-  return `${KITE_LOGIN_URL}?${params}`;
+  // Kite requires the redirect URL to match what's registered in the app settings
+  // It's sent as part of the login URL to avoid "Missing or empty field `authorize`" error
+  return `${KITE_LOGIN_URL}?${params}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`;
 }
 
 /**
