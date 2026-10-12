@@ -201,6 +201,10 @@ export default function Home() {
   // Rebalance state
   const [rebalance, setRebalance] = useState<RebalanceResult | null>(null);
   const [rebalanceRunning, setRebalanceRunning] = useState(false);
+  const [showZerodhaDialog, setShowZerodhaDialog] = useState(false);
+  const [kiteToken, setKiteToken] = useState("");
+  const [kiteConnecting, setKiteConnecting] = useState(false);
+  const [kiteConnected, setKiteConnected] = useState(false);
 
   // Auto-load state (effect is defined AFTER runScreen below to avoid TDZ error)
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -684,15 +688,18 @@ export default function Home() {
                 {notifPermission === "granted" ? "On" : notifPermission === "denied" ? "Blocked" : notifPermission === "unsupported" ? "N/A" : "Alerts"}
               </span>
             </Button>
-            {/* Zerodha connect button */}
-            <a href="/api/zerodha/login">
-              <Button variant="outline" size="sm" className="h-7 px-2 text-[11px] gap-1">
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                <span className="hidden sm:inline">Zerodha</span>
-              </Button>
-            </a>
+            {/* Zerodha connect button — opens dialog with OAuth + manual token options */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px] gap-1"
+              onClick={() => setShowZerodhaDialog(true)}
+            >
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <span className="hidden sm:inline">Zerodha</span>
+            </Button>
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant={autoRefreshOn ? "default" : "outline"} size="sm" className="h-7 px-2 text-[11px]">
@@ -943,9 +950,97 @@ export default function Home() {
         </Tabs>
       </main>
 
+      {/* Zerodha Connect Dialog */}
+      {showZerodhaDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowZerodhaDialog(false)}>
+          <div className="bg-card rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-bold mb-1">Connect Zerodha</h2>
+            <p className="text-xs text-muted-foreground mb-4">
+              Connect your Zerodha account for real-time data, no rate limits, and live portfolio sync.
+            </p>
+
+            {kiteConnected ? (
+              <div className="text-center py-4">
+                <div className="text-2xl mb-2">✅</div>
+                <p className="text-sm font-medium text-emerald-600">Connected to Zerodha!</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={() => setShowZerodhaDialog(false)}>
+                  Close
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Option 1: OAuth login */}
+                <div>
+                  <a href="/api/zerodha/login">
+                    <Button className="w-full" variant="default">
+                      Login with Zerodha
+                    </Button>
+                  </a>
+                  <p className="text-[10px] text-muted-foreground mt-1 text-center">
+                    Redirects to Zerodha login page
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-px bg-border/40" />
+                  <span className="text-[10px] text-muted-foreground">OR</span>
+                  <div className="flex-1 h-px bg-border/40" />
+                </div>
+
+                {/* Option 2: Manual token entry */}
+                <div>
+                  <Label className="text-xs font-medium">Manual: Paste Request Token</Label>
+                  <p className="text-[10px] text-muted-foreground mb-2">
+                    1. Go to <a href="https://kite.trade/developer/share" target="_blank" className="text-primary underline">kite.trade/developer/share</a><br />
+                    2. Click your app → "Login" → authorize<br />
+                    3. Copy the <code>request_token</code> from the redirect URL<br />
+                    4. Paste it here
+                  </p>
+                  <Input
+                    placeholder="e.g. aBcDeFgHiJkL..."
+                    value={kiteToken}
+                    onChange={(e) => setKiteToken(e.target.value)}
+                    className="text-xs"
+                  />
+                  <Button
+                    className="w-full mt-2"
+                    variant="outline"
+                    size="sm"
+                    disabled={!kiteToken.trim() || kiteConnecting}
+                    onClick={async () => {
+                      setKiteConnecting(true);
+                      try {
+                        const res = await fetch("/api/zerodha/token", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ request_token: kiteToken.trim() }),
+                        });
+                        if (res.ok) {
+                          setKiteConnected(true);
+                          toast({ title: "Connected to Zerodha!", description: "You can now use Zerodha data source" });
+                        } else {
+                          const err = await res.json();
+                          toast({ title: "Connection failed", description: err.error || "Unknown error", variant: "destructive" });
+                        }
+                      } catch {
+                        toast({ title: "Connection failed", description: "Network error", variant: "destructive" });
+                      } finally {
+                        setKiteConnecting(false);
+                      }
+                    }}
+                  >
+                    {kiteConnecting ? "Connecting..." : "Connect with Token"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Footer — desktop only */}
       <footer className="hidden sm:block border-t border-border/60 py-3 text-center text-[10px] text-muted-foreground">
-        Live data from Yahoo Finance · RSI(14) Wilder · Universe: Nifty Total Market · Built with Next.js 16
+        Live data from Yahoo Finance / Zerodha Kite · RSI(14) Wilder · Universe: Nifty Total Market · Built with Next.js 16
       </footer>
 
       {/* Mobile bottom nav — app-style */}
