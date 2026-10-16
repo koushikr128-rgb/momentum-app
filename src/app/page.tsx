@@ -2467,7 +2467,9 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                       <TableHead className="text-right">Entry</TableHead>
                       <TableHead className="text-right">Trailing SL</TableHead>
                       <TableHead className="text-right">Risk%</TableHead>
-                      <TableHead className="text-right hidden sm:table-cell">1W %</TableHead>
+                      <TableHead className="text-right">1W %</TableHead>
+                      <TableHead className="text-right hidden sm:table-cell">1M %</TableHead>
+                      <TableHead className="text-right hidden sm:table-cell">6M %</TableHead>
                       <TableHead className="text-right hidden md:table-cell">Price</TableHead>
                     </>
                   ) : (
@@ -2519,7 +2521,9 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                             {s.riskPct?.toFixed(1)}%
                           </span>
                         </TableCell>
-                        <TableCell className="text-right tabular-nums hidden sm:table-cell"><ReturnCell pct={s.ret1wPct} /></TableCell>
+                        <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1wPct} /></TableCell>
+                        <TableCell className="text-right tabular-nums hidden sm:table-cell"><ReturnCell pct={s.ret1mPct} /></TableCell>
+                        <TableCell className="text-right tabular-nums hidden sm:table-cell font-semibold"><ReturnCell pct={s.ret6mPct} /></TableCell>
                         <TableCell className="text-right tabular-nums hidden md:table-cell">₹{fmt(s.currentPrice)}</TableCell>
                       </>
                     ) : (
