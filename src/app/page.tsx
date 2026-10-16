@@ -2478,15 +2478,16 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                       <TableHead className="text-right">Price (₹)</TableHead>
                       <TableHead className="text-right">RSI</TableHead>
                       <TableHead className="text-right hidden sm:table-cell">MCap (₹Cr)</TableHead>
+                      <TableHead className="text-right">1W %</TableHead>
                       <TableHead className="text-right">1M %</TableHead>
                       <TableHead className="text-right hidden sm:table-cell">3M %</TableHead>
                       <TableHead className="text-right hidden md:table-cell">6M %</TableHead>
                       <TableHead className="text-right hidden lg:table-cell">Sharpe</TableHead>
                       <TableHead>Setup</TableHead>
                       <TableHead className="text-right">Signal</TableHead>
+                      <TableHead className="text-right hidden md:table-cell">Stop (₹)</TableHead>
                       <TableHead className="text-right hidden md:table-cell">R:R</TableHead>
                       <TableHead className="text-right hidden lg:table-cell">Vol</TableHead>
-                      <TableHead className="text-right hidden md:table-cell">Mom.</TableHead>
                     </>
                   )}
                   {onAnalyze && <TableHead className="text-right">Analyze</TableHead>}
@@ -2534,20 +2535,19 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                           <RsiBadge rsi={s.rsi14} />
                         </TableCell>
                         <TableCell className="text-right hidden sm:table-cell tabular-nums">{fmt(s.marketCapCr, 0)}</TableCell>
+                        <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1wPct} /></TableCell>
                         <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1mPct} /></TableCell>
                         <TableCell className="text-right hidden sm:table-cell tabular-nums"><ReturnCell pct={s.ret3mPct} /></TableCell>
                         <TableCell className="text-right hidden md:table-cell tabular-nums font-semibold"><ReturnCell pct={s.ret6mPct} /></TableCell>
                         <TableCell className="text-right hidden lg:table-cell tabular-nums">{fmt(s.sharpe)}</TableCell>
                         <TableCell><SetupBadge type={s.setupType} grade={s.setupGrade} /></TableCell>
                         <TableCell className="text-right"><SignalScoreBadge score={s.signalScore} /></TableCell>
+                        <TableCell className="text-right hidden md:table-cell tabular-nums text-red-600 font-semibold">₹{fmt(s.stopPrice)}</TableCell>
                         <TableCell className="text-right hidden md:table-cell tabular-nums">
                           <span className="text-[10px] font-semibold">{getRRForSetup(s.setupType, rrOverride ?? null).t2.toFixed(1)}:1</span>
                         </TableCell>
                         <TableCell className="text-right hidden lg:table-cell">
                           <VolMultBadge mult={s.volMult} tag={s.vsaTag} />
-                        </TableCell>
-                        <TableCell className="text-right hidden md:table-cell">
-                          <MomentumScoreBadge score={s.momentumScore} />
                         </TableCell>
                       </>
                     )}
