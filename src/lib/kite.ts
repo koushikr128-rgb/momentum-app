@@ -13,7 +13,7 @@ const KITE_LOGIN_URL = "https://kite.zerodha.com/connect/login";
 
 // API credentials — stored in .env on Vercel, hardcoded for sandbox
 const API_KEY = process.env.KITE_API_KEY || "mrotfrt78mmjv00p";
-const API_SECRET = process.env.KITE_API_SECRET || "";
+const API_SECRET = process.env.KITE_API_SECRET || "7rqlb307keo1wj5fgl5io3s1wbziyrsk";
 export const REDIRECT_URI =
   process.env.KITE_REDIRECT_URI ||
   "https://preview-1fd75aa3-09a0-4ed0-80d6-1be7478b89a2.space-z.ai/api/zerodha/callback";
@@ -197,4 +197,48 @@ export async function fetchLTP(
     result.set(symbol, (val as { last_price: number }).last_price);
   }
   return result;
+}
+
+/**
+ * Fetch full OHLC quote (today's OHLC + previous close) for one instrument.
+ * Works with the basic Kite plan — doesn't require historical data permission.
+ */
+export async function fetchOHLCQuote(
+  accessToken: string,
+  instrument: string
+): Promise<{
+  instrument: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  last_price: number;
+  previous_close: number;
+} | null> {
+  const res = await fetch(`${KITE_BASE}/quote/ohlc?i=${encodeURIComponent(instrument)}`, {
+    headers: {
+      "X-Kite-Version": "3",
+      Authorization: `token ${API_KEY}:${accessToken}`,
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.error(`[kite] OHLC quote ${instrument} HTTP ${res.status}:`, body.slice(0, 200));
+    return null;
+  }
+
+  const data = await res.json();
+  const entry = data.data?.[instrument];
+  if (!entry) return null;
+  return {
+    instrument,
+    open: entry.ohlc?.open ?? 0,
+    high: entry.ohlc?.high ?? 0,
+    low: entry.ohlc?.low ?? 0,
+    close: entry.ohlc?.close ?? 0,
+    last_price: entry.last_price ?? 0,
+    previous_close: entry.ohlc?.close ?? entry.last_price ?? 0,
+  };
 }

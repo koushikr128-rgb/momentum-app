@@ -1,0 +1,2002 @@
+     1→'use client';
+     2→
+     3→import { useState, useCallback, useEffect, useRef } from "react";
+     4→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+     5→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+     6→import { Button } from "@/components/ui/button";
+     7→import { Badge } from "@/components/ui/badge";
+     8→import { Progress } from "@/components/ui/progress";
+     9→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+    10→import { Input } from "@/components/ui/input";
+    11→import { Label } from "@/components/ui/label";
+    12→import { Skeleton } from "@/components/ui/skeleton";
+    13→import { Switch } from "@/components/ui/switch";
+    14→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    15→import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+    16→import { toast } from "@/hooks/use-toast";
+    17→import {
+    18→  Activity, ArrowDown, ArrowUp, RefreshCw, AlertTriangle,
+    19→  ShieldAlert, TrendingUp, TrendingDown, Gauge, Wallet, Target, Zap, Timer, Clock,
+    20→  Bell, BellRing, History, GitCompare, SlidersHorizontal,
+    21→} from "lucide-react";
+    22→import {
+    23→  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
+    24→} from "recharts";
+    25→
+    26→import { ScreenedStock, AllocationStock, StopLossStock, StressScenario } from "@/lib/indicators";
+    27→
+    28→type ScreenResponse = {
+    29→  universeSize: number;
+    30→  passedData: number;
+    31→  passedTech: number;
+    32→  passedMc: number;
+    33→  top10: ScreenedStock[];
+    34→  runAt: string;
+    35→  elapsedMs: number;
+    36→  error?: string;
+    37→  warning?: string;
+    38→  stale?: boolean;
+    39→  fallback?: boolean;
+    40→  cached?: boolean;
+    41→};
+    42→
+    43→type ScreenChange = {
+    44→  date: string;          // ISO timestamp when the change was detected
+    45→  added: Array<{ symbol: string; ret6mPct: number }>;
+    46→  removed: string[];     // just symbols (we don't have full data for removed stocks)
+    47→};
+    48→
+    49→type RemovedStock = {
+    50→  symbol: string;
+    51→  sector: string;
+    52→  currentPrice: number;
+    53→  attemptedRupees: number;
+    54→  attemptedWeight: number;
+    55→  reason: string;
+    56→};
+    57→
+    58→type AllocateResponse = {
+    59→  allocation: AllocationStock[];
+    60→  removedStocks: RemovedStock[];
+    61→  mode?: "risk-parity" | "momentum";
+    62→  totalInvested: number;
+    63→  totalAllocated: number;
+    64→  cashLeftover: number;
+    65→  sectorBreakdown: Array<{ sector: string; weight: number; count: number; rupees: number }>;
+    66→};
+    67→
+    68→type RebalanceAction = "BUY MORE" | "HOLD" | "TRIM 30%" | "TRIM 60%" | "EXIT" | "INITIATE";
+    69→
+    70→type RebalanceItem = {
+    71→  symbol: string;
+    72→  longName: string;
+    73→  sector: string;
+    74→  action: RebalanceAction;
+    75→  currentPrice: number;
+    76→  entryPrice?: number;
+    77→  pnlPct?: number;
+    78→  currentMomentum: number;
+    79→  previousMomentum?: number;
+    80→  momentumDelta?: number;
+    81→  currentShares?: number;
+    82→  targetShares: number;
+    83→  sharesChange: number;
+    84→  rupeesChange: number;
+    85→  reason: string;
+    86→};
+    87→
+    88→type RebalanceResult = {
+    89→  items: RebalanceItem[];
+    90→  summary: {
+    91→    buyMore: number;
+    92→    hold: number;
+    93→    trim30: number;
+    94→    trim60: number;
+    95→    exit: number;
+    96→    initiate: number;
+    97→    totalBuyRupees: number;
+    98→    totalSellRupees: number;
+    99→    netCashflow: number;
+   100→  };
+   101→};
+   102→
+   103→type StopsResponse = {
+   104→  stops: StopLossStock[];
+   105→  totalPnl: number;
+   106→  totalInvested: number;
+   107→  pnlPct: number;
+   108→  runAt: string;
+   109→  statusCounts: { HOLD: number; WATCH: number; EXIT: number };
+   110→};
+   111→
+   112→type StressResponse = {
+   113→  scenarios: StressScenario[];
+   114→  totalInvested: number;
+   115→  worstDrawdown: number;
+   116→  worstLoss: number;
+   117→};
+   118→
+   119→type BacktestSummary = {
+   120→  backtest_period: string;
+   121→  rebalances: number;
+   122→  initial_capital: number;
+   123→  final_strategy: number;
+   124→  final_benchmark: number;
+   125→  total_strategy_ret_pct: number;
+   126→  total_benchmark_ret_pct: number;
+   127→  cagr_strategy_pct: number;
+   128→  cagr_benchmark_pct: number;
+   129→  max_drawdown_pct: number;
+   130→  sharpe: number;
+   131→  win_rate_pct: number;
+   132→  winners: number;
+   133→  losers: number;
+   134→  avg_winner_pct: number;
+   135→  avg_loser_pct: number;
+   136→  excess_return_pct: number;
+   137→};
+   138→
+   139→type BacktestResponse = {
+   140→  equity_curve: Array<{ date: string; strategy: number; benchmark: number }>;
+   141→  monthly_returns: Array<{ month: string; strategy_ret: number; benchmark_ret: number }>;
+   142→  summary: BacktestSummary | null;
+   143→  picks_history: Array<{ date: string; picks: string[]; strategy_ret: number; benchmark_ret: number }>;
+   144→  run_at: string;
+   145→  elapsedMs?: number;
+   146→  cached?: boolean;
+   147→  error?: string;
+   148→};
+   149→
+   150→type CorrelationResponse = {
+   151→  matrix: (string | number)[][];
+   152→  symbols: string[];
+   153→  effectiveBets: number;
+   154→  avgCorrelation: number;
+   155→  highCorrelationPairs: Array<{ a: string; b: string; rho: number }>;
+   156→  nDataPoints: number;
+   157→  error?: string;
+   158→};
+   159→
+   160→const fmt = (n: number, d = 2) =>
+   161→  isNaN(n) || n === null ? "—" : n.toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d });
+   162→const fmtINR = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+   163→const fmtPct = (n: number) => (isNaN(n) ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(2)}%`);
+   164→const IST = "Asia/Kolkata";
+   165→const fmtISTTime = (d: string | Date) => new Date(d).toLocaleTimeString("en-IN", { timeZone: IST, hour: "2-digit", minute: "2-digit" });
+   166→const fmtISTDateTime = (d: string | Date) => new Date(d).toLocaleString("en-IN", { timeZone: IST, day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+   167→const fmtISTDate = (d: string | Date) => new Date(d).toLocaleDateString("en-IN", { timeZone: IST, day: "2-digit", month: "short", year: "numeric" });
+   168→const fmtISTDateShort = (d: string | Date) => new Date(d).toLocaleDateString("en-IN", { timeZone: IST, day: "2-digit", month: "short" });
+   169→
+   170→const AUTO_REFRESH_OPTIONS = [
+   171→  { value: 15, label: "15 minutes" },
+   172→  { value: 30, label: "30 minutes" },
+   173→  { value: 60, label: "1 hour" },
+   174→  { value: 180, label: "3 hours" },
+   175→  { value: 360, label: "6 hours" },
+   176→];
+   177→
+   178→export default function Home() {
+   179→  const [tab, setTab] = useState("screen");
+   180→  const [running, setRunning] = useState<"screen" | "stops" | null>(null);
+   181→
+   182→  const [screen, setScreen] = useState<ScreenResponse | null>(null);
+   183→  const [prevScreenSymbols, setPrevScreenSymbols] = useState<string[] | null>(null);
+   184→  const [changeHistory, setChangeHistory] = useState<ScreenChange[]>([]);
+   185→  const [heldStocks, setHeldStocks] = useState<HeldStock[]>([]);
+   186→  const heldStocksRef = useRef<HeldStock[]>([]);
+   187→  const screenRef = useRef<ScreenResponse | null>(null);
+   188→  const [alloc, setAlloc] = useState<AllocateResponse | null>(null);
+   189→  const [stops, setStops] = useState<StopsResponse | null>(null);
+   190→  const [stress, setStress] = useState<StressResponse | null>(null);
+   191→  const [totalInvestment, setTotalInvestment] = useState(200000);
+   192→  const [topN, setTopN] = useState(10);  // ← NEW: customizable portfolio size
+   193→  const [allocDirty, setAllocDirty] = useState(false);
+   194→
+   195→  // Filter thresholds (loosened defaults yield ~25 qualifiers)
+   196→  const [filters, setFilters] = useState({ rsiMin: 50, mcapMin: 200, volMin: 20000 });
+   197→
+   198→  // Allocation mode: "risk-parity" (inverse-vol) or "momentum" (momentum-weighted)
+   199→  const [allocationMode, setAllocationMode] = useState<"risk-parity" | "momentum">("risk-parity");
+   200→
+   201→  // Rebalance state
+   202→  const [rebalance, setRebalance] = useState<RebalanceResult | null>(null);
+   203→  const [rebalanceRunning, setRebalanceRunning] = useState(false);
+   204→  const [showZerodhaDialog, setShowZerodhaDialog] = useState(false);
+   205→  const [kiteToken, setKiteToken] = useState("");
+   206→  const [kiteConnecting, setKiteConnecting] = useState(false);
+   207→  const [kiteConnected, setKiteConnected] = useState(false);
+   208→
+   209→  // On mount: check URL for Zerodha callback token
+   210→  useEffect(() => {
+   211→    try {
+   212→      const params = new URLSearchParams(window.location.search);
+   213→      const zerodhaStatus = params.get("zerodha");
+   214→      const requestToken = params.get("request_token");
+   215→
+   216→      if (zerodhaStatus === "token" && requestToken) {
+   217→        // Auto-connect with the token from URL
+   218→        setShowZerodhaDialog(true);
+   219→        setKiteToken(requestToken);
+   220→        setKiteConnecting(true);
+   221→
+   222→        fetch("/api/zerodha/token", {
+   223→          method: "POST",
+   224→          headers: { "Content-Type": "application/json" },
+   225→          body: JSON.stringify({ request_token: requestToken }),
+   226→        })
+   227→          .then(async (res) => {
+   228→            if (res.ok) {
+   229→              setKiteConnected(true);
+   230→              setKiteConnecting(false);
+   231→              toast({ title: "Connected to Zerodha!", description: "You can now use Zerodha data source" });
+   232→            } else {
+   233→              const err = await res.json();
+   234→              setKiteConnecting(false);
+   235→              toast({ title: "Zerodha connection failed", description: err.error || "Unknown error", variant: "destructive" });
+   236→            }
+   237→          })
+   238→          .catch(() => {
+   239→            setKiteConnecting(false);
+   240→            toast({ title: "Connection failed", description: "Network error", variant: "destructive" });
+   241→          });
+   242→
+   243→        // Clean the URL (remove query params)
+   244→        window.history.replaceState({}, "", "/");
+   245→      } else if (zerodhaStatus === "error") {
+   246→        setShowZerodhaDialog(true);
+   247→        toast({ title: "Zerodha authorization failed", description: "Please try again", variant: "destructive" });
+   248→        window.history.replaceState({}, "", "/");
+   249→      }
+   250→    } catch {}
+   251→  }, []);
+   252→
+   253→  // Auto-load state (effect is defined AFTER runScreen below to avoid TDZ error)
+   254→  const [elapsedMs, setElapsedMs] = useState(0);
+   255→
+   256→  // Auto-refresh state
+   257→  const [autoRefreshOn, setAutoRefreshOn] = useState(false);
+   258→  const [autoRefreshMin, setAutoRefreshMin] = useState(60);
+   259→  const [nextRunAt, setNextRunAt] = useState<number | null>(null);
+   260→  const [countdown, setCountdown] = useState<string>("");
+   261→  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+   262→
+   263→  // Backtest state
+   264→  const [backtest, setBacktest] = useState<BacktestResponse | null>(null);
+   265→  const [backtestRunning, setBacktestRunning] = useState(false);
+   266→
+   267→  // Correlation state
+   268→  const [correlation, setCorrelation] = useState<CorrelationResponse | null>(null);
+   269→  const [correlationRunning, setCorrelationRunning] = useState(false);
+   270→
+   271→  // Push notification state
+   272→  // Initialize as "loading" — replaced with real value on client mount via useEffect.
+   273→  // This avoids SSR hydration mismatch because Notification doesn't exist server-side.
+   274→  const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported" | "loading">("loading");
+   275→  const lastAlertedRef = useRef<string>("");  // hash of last alerted symbols to avoid spamming
+   276→
+   277→  useEffect(() => {
+   278→    setNotifPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
+   279→  }, []);
+   280→
+   281→  // Load change history from localStorage on mount (persists across sessions)
+   282→  useEffect(() => {
+   283→    try {
+   284→      const stored = localStorage.getItem("nifty_change_history");
+   285→      if (stored) {
+   286→        const parsed = JSON.parse(stored) as ScreenChange[];
+   287→        if (Array.isArray(parsed)) setChangeHistory(parsed);
+   288→      }
+   289→    } catch { /* ignore parse errors */ }
+   290→  }, []);
+   291→
+   292→  // Save change history to localStorage whenever it changes
+   293→  useEffect(() => {
+   294→    try {
+   295→      localStorage.setItem("nifty_change_history", JSON.stringify(changeHistory.slice(-20)));
+   296→    } catch { /* storage full or unavailable */ }
+   297→  }, [changeHistory]);
+   298→
+   299→  const runScreen = useCallback(async (silent = false, topNOverride?: number, filtersOverride?: typeof filters) => {
+   300→    setRunning("screen");  // always set running state so loading indicator shows
+   301→    try {
+   302→      const n = topNOverride ?? topN;
+   303→      const f = filtersOverride ?? filters;
+   304→      const qs = new URLSearchParams({
+   305→        topN: String(n),
+   306→        rsiMin: String(f.rsiMin),
+   307→        mcapMin: String(f.mcapMin),
+   308→        volMin: String(f.volMin),
+   309→      });
+   310→      const res = await fetch(`/api/screen?${qs}`, { cache: "no-store" });
+   311→      if (!res.ok) throw new Error(`Screen failed (${res.status})`);
+   312→      const data: ScreenResponse = await res.json();
+   313→      // Track previous screen symbols for change detection (using ref to avoid stale closure)
+   314→      const prev = screenRef.current;
+   315→      if (prev && prev.top10.length > 0 && data.top10.length > 0) {
+   316→        const prevSyms = prev.top10.map((s) => s.symbol);
+   317→        const currentSyms = data.top10.map((s) => s.symbol);
+   318→        const added = currentSyms.filter((s) => !prevSyms.includes(s));
+   319→        const removed = prevSyms.filter((s) => !currentSyms.includes(s));
+   320→        // Only record if there are actual changes
+   321→        if (added.length > 0 || removed.length > 0) {
+   322→          const change: ScreenChange = {
+   323→            date: new Date().toISOString(),
+   324→            added: added.map((sym) => {
+   325→              const stock = data.top10.find((s) => s.symbol === sym);
+   326→              return { symbol: sym, ret6mPct: stock?.ret6mPct ?? 0 };
+   327→            }),
+   328→            removed,
+   329→          };
+   330→          setChangeHistory((prev) => [...prev, change].slice(-20));
+   331→        }
+   332→        setPrevScreenSymbols(prevSyms);
+   333→      }
+   334→      screenRef.current = data;
+   335→      setScreen(data);
+   336→      setAllocDirty(true);
+   337→      if (!silent) {
+   338→        // Don't show toast on auto-load; show warning toast if stale/fallback
+   339→        if (data.error) {
+   340→          toast({ title: "Screen failed — Yahoo rate-limited", description: data.error.slice(0, 100), variant: "destructive" });
+   341→        } else if (data.warning) {
+   342→          toast({ title: "Showing cached data", description: data.warning.slice(0, 100) });
+   343→        } else {
+   344→          toast({ title: "Screen complete", description: `${data.top10.length} stocks in Top ${n} — ${(data.elapsedMs / 1000).toFixed(1)}s` });
+   345→        }
+   346→      }
+   347→      return data;
+   348→    } catch (e) {
+   349→      toast({ title: "Screen failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   350→      return null;
+   351→    } finally {
+   352→      setRunning(null);
+   353→    }
+   354→  }, [topN, filters]);
+   355→
+   356→  // MANDATORY: Do NOT auto-fetch on mount. Restore from localStorage only.
+   357→  // Screen ONLY refreshes when user clicks Run Screen, auto-refresh is ON,
+   358→  // or user changes Top N / filters. NEVER add runScreen() here.
+   359→  useEffect(() => {
+   360→    try {
+   361→      const s = localStorage.getItem("nifty_last_screen");
+   362→      if (s) { const p = JSON.parse(s); if (p?.top10?.length > 0) { screenRef.current = p; setScreen(p); } }
+   363→      const h = localStorage.getItem("nifty_held_stocks");
+   364→      if (h) { const ph = JSON.parse(h); if (Array.isArray(ph)) { setHeldStocks(ph); heldStocksRef.current = ph; } }
+   365→      const c = localStorage.getItem("nifty_change_history");
+   366→      if (c) { const pc = JSON.parse(c); if (Array.isArray(pc)) setChangeHistory(pc); }
+   367→    } catch {}
+   368→  }, []);
+   369→  useEffect(() => { if (screen?.top10?.length > 0) try { localStorage.setItem("nifty_last_screen", JSON.stringify(screen)); } catch {} }, [screen]);
+   370→  useEffect(() => { try { localStorage.setItem("nifty_held_stocks", JSON.stringify(heldStocks)); } catch {} }, [heldStocks]);
+   371→  useEffect(() => { try { localStorage.setItem("nifty_change_history", JSON.stringify(changeHistory.slice(-20))); } catch {} }, [changeHistory]);
+   372→
+   373→  const runAllocation = useCallback(async (silent = false, modeOverride?: "risk-parity" | "momentum") => {
+   374→    if (!screen) return;
+   375→    try {
+   376→      const mode = modeOverride ?? allocationMode;
+   377→      const res = await fetch("/api/allocate", {
+   378→        method: "POST",
+   379→        headers: { "Content-Type": "application/json" },
+   380→        body: JSON.stringify({ stocks: screen.top10, totalInvestment, mode }),
+   381→      });
+   382→      if (!res.ok) throw new Error("Allocation failed");
+   383→      const data: AllocateResponse = await res.json();
+   384→      setAlloc(data);
+   385→      setAllocDirty(false);
+   386→      // Invalidate rebalance since allocation changed
+   387→      setRebalance(null);
+   388→      if (!silent) {
+   389→        toast({ title: "Allocation computed", description: `${fmtINR(data.totalInvested)} across ${data.allocation.length} stocks (${mode === "momentum" ? "momentum-weighted" : "risk parity"})` });
+   390→      }
+   391→      return data;
+   392→    } catch (e) {
+   393→      if (!silent) {
+   394→        toast({ title: "Allocation failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   395→      }
+   396→      return null;
+   397→    }
+   398→  }, [screen, totalInvestment, allocationMode]);
+   399→
+   400→  const runRebalance = useCallback(async () => {
+   401→    if (!alloc || !screen) return;
+   402→    setRebalanceRunning(true);
+   403→    try {
+   404→      const res = await fetch("/api/rebalance", {
+   405→        method: "POST",
+   406→        headers: { "Content-Type": "application/json" },
+   407→        body: JSON.stringify({
+   408→          allocation: alloc.allocation,
+   409→          screen: screen.top10,
+   410→          totalInvestment: alloc.totalInvested,
+   411→        }),
+   412→      });
+   413→      if (!res.ok) throw new Error("Rebalance failed");
+   414→      const data: RebalanceResult = await res.json();
+   415→      setRebalance(data);
+   416→      const s = data.summary;
+   417→      toast({
+   418→        title: "Rebalance computed",
+   419→        description: `${s.buyMore} buy more · ${s.hold} hold · ${s.trim30 + s.trim60} trim · ${s.exit} exit · ${s.initiate} new`,
+   420→      });
+   421→    } catch (e) {
+   422→      toast({ title: "Rebalance failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   423→    } finally {
+   424→      setRebalanceRunning(false);
+   425→    }
+   426→  }, [alloc, screen]);
+   427→
+   428→  const runStops = useCallback(async (silent = false) => {
+   429→    if (!alloc) return;
+   430→    if (!silent) setRunning("stops");
+   431→    try {
+   432→      const res = await fetch("/api/stops", {
+   433→        method: "POST",
+   434→        headers: { "Content-Type": "application/json" },
+   435→        body: JSON.stringify({ allocation: alloc.allocation }),
+   436→      });
+   437→      if (!res.ok) throw new Error("Stop-loss fetch failed");
+   438→      const data: StopsResponse = await res.json();
+   439→      setStops(data);
+   440→      if (!silent) {
+   441→        toast({ title: "Stop-loss refreshed", description: `P&L ${fmtPct(data.pnlPct)} • ${data.statusCounts.HOLD} HOLD, ${data.statusCounts.WATCH} WATCH, ${data.statusCounts.EXIT} EXIT` });
+   442→      }
+   443→      return data;
+   444→    } catch (e) {
+   445→      if (!silent) {
+   446→        toast({ title: "Stop-loss failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   447→      }
+   448→      return null;
+   449→    } finally {
+   450→      setRunning(null);
+   451→    }
+   452→  }, [alloc]);
+   453→
+   454→  const runStress = useCallback(async (silent = false) => {
+   455→    if (!alloc) return;
+   456→    try {
+   457→      const res = await fetch("/api/stress", {
+   458→        method: "POST",
+   459→        headers: { "Content-Type": "application/json" },
+   460→        body: JSON.stringify({ allocation: alloc.allocation, totalInvested: alloc.totalInvested }),
+   461→      });
+   462→      if (!res.ok) throw new Error("Stress test failed");
+   463→      const data: StressResponse = await res.json();
+   464→      setStress(data);
+   465→      if (!silent) {
+   466→        toast({ title: "Stress test complete", description: `Worst drawdown ${data.worstDrawdown.toFixed(2)}%` });
+   467→      }
+   468→      return data;
+   469→    } catch (e) {
+   470→      if (!silent) {
+   471→        toast({ title: "Stress test failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   472→      }
+   473→      return null;
+   474→    }
+   475→  }, [alloc]);
+   476→
+   477→  // ---------- Auto-refresh engine ----------
+   478→  // On each tick, run screen silently. If allocation exists, re-run it. If stops exist, re-run them.
+   479→  // If stress exists, re-run it too. Then reset the next-run timer.
+   480→  const runAutoRefresh = useCallback(async () => {
+   481→    const fresh = await runScreen(true);
+   482→    if (!fresh) return;
+   483→    // re-allocate if user already had an allocation
+   484→    const newAlloc = await runAllocation(true);
+   485→    if (newAlloc) {
+   486→      // re-run stops + stress using the new allocation
+   487→      const stopsData = await runStopsWith(newAlloc, true);
+   488→      await runStressWith(newAlloc, true);
+   489→      // Re-run correlation if user had it open
+   490→      if (correlation) {
+   491→        await runCorrelationWith(newAlloc);
+   492→      }
+   493→      // Fire push notifications if any EXIT/WATCH holdings
+   494→      if (stopsData) {
+   495→        fireNotificationsIfAlert(stopsData);
+   496→      }
+   497→    }
+   498→    setNextRunAt(Date.now() + autoRefreshMin * 60 * 1000);
+   499→    toast({
+   500→      title: "Auto-refresh complete",
+   501→      description: `Next refresh in ${autoRefreshMin} min · ${fmtISTTime(Date.now() + autoRefreshMin * 60 * 1000)}`,
+   502→    });
+   503→  }, [runScreen, runAllocation, autoRefreshMin, correlation]);
+   504→
+   505→  // ---------- Backtest ----------
+   506→  const runBacktest = useCallback(async () => {
+   507→    setBacktestRunning(true);
+   508→    try {
+   509→      const res = await fetch("/api/backtest", { cache: "no-store" });
+   510→      if (!res.ok) throw new Error(`Backtest failed (${res.status})`);
+   511→      const data: BacktestResponse = await res.json();
+   512→      setBacktest(data);
+   513→      if (data.summary) {
+   514→        toast({
+   515→          title: "Backtest complete",
+   516→          description: `CAGR ${data.summary.cagr_strategy_pct}% vs Nifty ${data.summary.cagr_benchmark_pct}% · Sharpe ${data.summary.sharpe}`,
+   517→        });
+   518→      } else if (data.error) {
+   519→        toast({ title: "Backtest failed", description: data.error, variant: "destructive" });
+   520→      }
+   521→    } catch (e) {
+   522→      toast({ title: "Backtest failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   523→    } finally {
+   524→      setBacktestRunning(false);
+   525→    }
+   526→  }, []);
+   527→
+   528→  // ---------- Correlation ----------
+   529→  const runCorrelationWith = useCallback(async (allocArg: AllocateResponse) => {
+   530→    setCorrelationRunning(true);
+   531→    try {
+   532→      const res = await fetch("/api/correlation", {
+   533→        method: "POST",
+   534→        headers: { "Content-Type": "application/json" },
+   535→        body: JSON.stringify({ allocation: allocArg.allocation }),
+   536→      });
+   537→      if (!res.ok) throw new Error("Correlation failed");
+   538→      const data: CorrelationResponse = await res.json();
+   539→      setCorrelation(data);
+   540→      return data;
+   541→    } catch {
+   542→      return null;
+   543→    } finally {
+   544→      setCorrelationRunning(false);
+   545→    }
+   546→  }, []);
+   547→
+   548→  const runCorrelation = useCallback(async () => {
+   549→    if (!alloc) return;
+   550→    const data = await runCorrelationWith(alloc);
+   551→    if (data && !data.error) {
+   552→      toast({
+   553→        title: "Correlation computed",
+   554→        description: `${data.symbols.length} stocks · Effective bets: ${data.effectiveBets} · Avg ρ: ${data.avgCorrelation.toFixed(2)}`,
+   555→      });
+   556→    } else if (data?.error) {
+   557→      toast({ title: "Correlation failed", description: data.error, variant: "destructive" });
+   558→    }
+   559→  }, [alloc, runCorrelationWith]);
+   560→
+   561→  // ---------- Push notifications ----------
+   562→  const requestNotifPermission = useCallback(async () => {
+   563→    if (typeof Notification === "undefined") {
+   564→      toast({ title: "Not supported", description: "Your browser doesn't support notifications", variant: "destructive" });
+   565→      return;
+   566→    }
+   567→    const perm = await Notification.requestPermission();
+   568→    setNotifPermission(perm);
+   569→    if (perm === "granted") {
+   570→      toast({ title: "Notifications enabled", description: "You'll be pinged when any holding hits EXIT or WATCH status" });
+   571→      new Notification("Nifty Momentum Tracker", {
+   572→        body: "✅ Notifications enabled. We'll alert you when holdings need attention.",
+   573→      });
+   574→    } else {
+   575→      toast({ title: "Permission denied", description: "Enable notifications in browser settings to receive alerts", variant: "destructive" });
+   576→    }
+   577→  }, []);
+   578→
+   579→  const fireNotificationsIfAlert = useCallback((stopsData: StopsResponse) => {
+   580→    if (typeof Notification === "undefined") return;
+   581→    if (Notification.permission !== "granted") return;
+   582→    const alerts = stopsData.stops.filter((s) => s.status === "EXIT" || s.status === "WATCH");
+   583→    if (alerts.length === 0) return;
+   584→    // Build hash to dedupe (don't fire same alert twice in a row)
+   585→    const hash = alerts.map((a) => `${a.symbol}:${a.status}`).sort().join("|");
+   586→    if (hash === lastAlertedRef.current) return;
+   587→    lastAlertedRef.current = hash;
+   588→    const exitCount = alerts.filter((a) => a.status === "EXIT").length;
+   589→    const watchCount = alerts.filter((a) => a.status === "WATCH").length;
+   590→    const title = exitCount > 0 ? `🚨 ${exitCount} EXIT signal${exitCount > 1 ? "s" : ""}` : `⚠ ${watchCount} stock${watchCount > 1 ? "s" : ""} on WATCH`;
+   591→    const body = alerts
+   592→      .slice(0, 5)
+   593→      .map((a) => `${a.symbol}: ${a.status} (${a.pnlPct > 0 ? "+" : ""}${a.pnlPct.toFixed(1)}% — ${a.reasons || "healthy"})`)
+   594→      .join("\n");
+   595→    new Notification(title, { body, tag: "nifty-alert", requireInteraction: exitCount > 0 });
+   596→  }, []);
+   597→
+   598→  // Helpers that accept an explicit allocation (used by auto-refresh chain)
+   599→  const runStopsWith = useCallback(async (allocArg: AllocateResponse, silent = false) => {
+   600→    setRunning("stops");
+   601→    try {
+   602→      const res = await fetch("/api/stops", {
+   603→        method: "POST",
+   604→        headers: { "Content-Type": "application/json" },
+   605→        body: JSON.stringify({ allocation: allocArg.allocation }),
+   606→      });
+   607→      if (!res.ok) throw new Error("Stop-loss fetch failed");
+   608→      const data: StopsResponse = await res.json();
+   609→      setStops(data);
+   610→      return data;
+   611→    } catch {
+   612→      return null;
+   613→    } finally {
+   614→      setRunning(null);
+   615→    }
+   616→  }, []);
+   617→
+   618→  const runStressWith = useCallback(async (allocArg: AllocateResponse, silent = false) => {
+   619→    try {
+   620→      const res = await fetch("/api/stress", {
+   621→        method: "POST",
+   622→        headers: { "Content-Type": "application/json" },
+   623→        body: JSON.stringify({ allocation: allocArg.allocation, totalInvested: allocArg.totalInvested }),
+   624→      });
+   625→      if (!res.ok) throw new Error("Stress test failed");
+   626→      const data: StressResponse = await res.json();
+   627→      setStress(data);
+   628→      return data;
+   629→    } catch {
+   630→      return null;
+   631→    }
+   632→  }, []);
+   633→
+   634→  // When auto-refresh is toggled on, schedule the first run + start countdown ticker
+   635→  useEffect(() => {
+   636→    if (!autoRefreshOn) {
+   637→      setNextRunAt(null);
+   638→      setCountdown("");
+   639→      if (tickerRef.current) {
+   640→        clearInterval(tickerRef.current);
+   641→        tickerRef.current = null;
+   642→      }
+   643→      return;
+   644→    }
+   645→    // Schedule first auto-run
+   646→    setNextRunAt(Date.now() + autoRefreshMin * 60 * 1000);
+   647→
+   648→    // Ticker: every 1s update countdown and trigger refresh when due
+   649→    tickerRef.current = setInterval(() => {
+   650→      const target = Date.now() + autoRefreshMin * 60 * 1000;
+   651→      setNextRunAt((prev) => {
+   652→        const target = prev ?? Date.now();
+   653→        const remaining = target - Date.now();
+   654→        if (remaining <= 0) {
+   655→          // trigger auto-refresh (don't await inside setInterval)
+   656→          runAutoRefresh();
+   657→          return Date.now() + autoRefreshMin * 60 * 1000;
+   658→        }
+   659→        return prev;
+   660→      });
+   661→    }, 1000);
+   662→
+   663→    return () => {
+   664→      if (tickerRef.current) {
+   665→        clearInterval(tickerRef.current);
+   666→        tickerRef.current = null;
+   667→      }
+   668→    };
+   669→  }, [autoRefreshOn, autoRefreshMin, runAutoRefresh]);
+   670→
+   671→  // Update countdown display every second
+   672→  useEffect(() => {
+   673→    if (!autoRefreshOn || !nextRunAt) {
+   674→      setCountdown("");
+   675→      return;
+   676→    }
+   677→    const tick = () => {
+   678→      const remaining = nextRunAt - Date.now();
+   679→      if (remaining <= 0) {
+   680→        setCountdown("refreshing…");
+   681→        return;
+   682→      }
+   683→      const mins = Math.floor(remaining / 60000);
+   684→      const secs = Math.floor((remaining % 60000) / 1000);
+   685→      setCountdown(`${mins}m ${secs.toString().padStart(2, "0")}s`);
+   686→    };
+   687→    tick();
+   688→    const id = setInterval(tick, 1000);
+   689→    return () => clearInterval(id);
+   690→  }, [autoRefreshOn, nextRunAt]);
+   691→
+   692→  return (
+   693→    <div className="min-h-screen bg-background flex flex-col">
+   694→      {/* Header — compact */}
+   695→      <header className="border-b border-border/60 bg-card/80 backdrop-blur-md sticky top-0 z-20">
+   696→        <div className="max-w-7xl mx-auto px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2">
+   697→          <div className="flex items-center gap-2 min-w-0">
+   698→            <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-primary-foreground shadow-sm shrink-0">
+   699→              <TrendingUp className="w-4 h-4" />
+   700→            </div>
+   701→            <div className="min-w-0">
+   702→              <h1 className="text-sm font-bold text-foreground truncate">Nifty Momentum Tracker</h1>
+   703→              <p className="text-[10px] text-muted-foreground leading-tight truncate">
+   704→                High Relative Strength · Strong Trend
+   705→              </p>
+   706→            </div>
+   707→          </div>
+   708→          <div className="flex items-center gap-1.5">
+   709→            <Badge variant="outline" className="pastel-positive text-[10px] px-1.5 py-0 h-5 font-medium hidden sm:inline-flex">
+   710→              <Activity className="w-2.5 h-2.5 mr-1" />
+   711→              {running === "screen" && !screen
+   712→                ? `Loading ${elapsedMs ? (elapsedMs / 1000).toFixed(0) : 0}s…`
+   713→                : screen
+   714→                  ? fmtISTTime(screen.runAt)
+   715→                  : "—"}
+   716→            </Badge>
+   717→            {autoRefreshOn && (
+   718→              <Badge variant="outline" className="pastel-info text-[10px] px-1.5 py-0 h-5 font-medium tabular-nums">
+   719→                <Clock className="w-2.5 h-2.5 mr-1" /> {countdown}
+   720→              </Badge>
+   721→            )}
+   722→            <Button
+   723→              variant={notifPermission === "granted" ? "default" : "outline"}
+   724→              size="sm"
+   725→              onClick={requestNotifPermission}
+   726→              disabled={notifPermission === "granted" || notifPermission === "unsupported" || notifPermission === "denied"}
+   727→              suppressHydrationWarning
+   728→              className="h-7 px-2 text-[11px]"
+   729→            >
+   730→              {notifPermission === "granted" ? <BellRing className="w-3 h-3 sm:mr-1" /> : <Bell className="w-3 h-3 sm:mr-1" />}
+   731→              <span suppressHydrationWarning className="hidden sm:inline">
+   732→                {notifPermission === "granted" ? "On" : notifPermission === "denied" ? "Blocked" : notifPermission === "unsupported" ? "N/A" : "Alerts"}
+   733→              </span>
+   734→            </Button>
+   735→            {/* Zerodha connect button — opens dialog with OAuth + manual token options */}
+   736→            <Button
+   737→              variant="outline"
+   738→              size="sm"
+   739→              className="h-7 px-2 text-[11px] gap-1"
+   740→              onClick={() => setShowZerodhaDialog(true)}
+   741→            >
+   742→              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+   743→                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" strokeLinecap="round" strokeLinejoin="round"/>
+   744→              </svg>
+   745→              <span className="hidden sm:inline">Zerodha</span>
+   746→            </Button>
+   747→            <Popover>
+   748→              <PopoverTrigger asChild>
+   749→                <Button variant={autoRefreshOn ? "default" : "outline"} size="sm" className="h-7 px-2 text-[11px]">
+   750→                  <Timer className="w-3 h-3 sm:mr-1" />
+   751→                  <span className="hidden sm:inline">{autoRefreshOn ? `${autoRefreshMin}m` : "Auto"}</span>
+   752→                </Button>
+   753→              </PopoverTrigger>
+   754→              <PopoverContent className="w-72" align="end">
+   755→                <div className="space-y-3">
+   756→                  <div className="flex items-center justify-between">
+   757→                    <Label htmlFor="auto-toggle" className="text-sm font-medium">Auto-refresh</Label>
+   758→                    <Switch id="auto-toggle" checked={autoRefreshOn} onCheckedChange={setAutoRefreshOn} />
+   759→                  </div>
+   760→                  <div className="space-y-1">
+   761→                    <Label className="text-xs text-muted-foreground">Interval</Label>
+   762→                    <Select value={String(autoRefreshMin)} onValueChange={(v) => setAutoRefreshMin(Number(v))}>
+   763→                      <SelectTrigger><SelectValue /></SelectTrigger>
+   764→                      <SelectContent>
+   765→                        {AUTO_REFRESH_OPTIONS.map((o) => (
+   766→                          <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
+   767→                        ))}
+   768→                      </SelectContent>
+   769→                    </Select>
+   770→                  </div>
+   771→                  <p className="text-xs text-muted-foreground">
+   772→                    Re-fetches live Top 10, re-allocates capital, refreshes stop-loss every {autoRefreshMin} min. Stress + correlation also re-run if open.
+   773→                  </p>
+   774→                  {autoRefreshOn && nextRunAt && (
+   775→                    <p className="text-xs text-primary font-medium">
+   776→                      Next refresh at {fmtISTTime(nextRunAt)}
+   777→                    </p>
+   778→                  )}
+   779→                </div>
+   780→              </PopoverContent>
+   781→            </Popover>
+   782→            <Button onClick={() => runScreen(false)} disabled={running === "screen"} size="sm" className="h-7 px-2.5 text-[11px]">
+   783→              <RefreshCw className={`w-3 h-3 sm:mr-1 ${running === "screen" ? "animate-spin" : ""}`} />
+   784→              <span className="hidden sm:inline">{running === "screen" ? "Running…" : "Run Screen"}</span>
+   785→            </Button>
+   786→            {/* Top N selector — pick portfolio size (5/10/15/20/25/30 stocks) */}
+   787→            <div className="flex items-center gap-1">
+   788→              <Label htmlFor="topn-select" className="text-[10px] text-muted-foreground hidden sm:inline">Top</Label>
+   789→              <Select value={String(topN)} onValueChange={(v) => {
+   790→                const newN = Number(v);
+   791→                setTopN(newN);
+   792→                // Auto-run screen with new N if user has already run it once
+   793→                if (screen) {
+   794→                  toast({ title: `Switching to Top ${newN}`, description: "Re-running screen…" });
+   795→                  runScreen(false, newN);
+   796→                }
+   797→              }}>
+   798→                <SelectTrigger id="topn-select" className="h-7 w-[52px] text-[11px] px-1.5 py-0 gap-0.5">
+   799→                  <SelectValue />
+   800→                </SelectTrigger>
+   801→                <SelectContent>
+   802→                  {[5, 10, 15, 20, 25, 30].map((n) => (
+   803→                    <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+   804→                  ))}
+   805→                </SelectContent>
+   806→              </Select>
+   807→              <Label htmlFor="topn-select" className="text-[10px] text-muted-foreground hidden sm:inline">stocks</Label>
+   808→            </div>
+   809→            {/* Filters popover — adjustable RSI, MCap, Vol thresholds */}
+   810→            <Popover>
+   811→              <PopoverTrigger asChild>
+   812→                <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]">
+   813→                  <SlidersHorizontal className="w-3 h-3 sm:mr-1" />
+   814→                  <span className="hidden sm:inline">Filters</span>
+   815→                </Button>
+   816→              </PopoverTrigger>
+   817→              <PopoverContent className="w-80" align="end">
+   818→                <div className="space-y-4">
+   819→                  <div>
+   820→                    <div className="flex items-center justify-between mb-1">
+   821→                      <Label className="text-xs font-medium">Min RSI(14)</Label>
+   822→                      <span className="text-xs font-bold tabular-nums text-primary">{filters.rsiMin}</span>
+   823→                    </div>
+   824→                    <input
+   825→                      type="range" min={40} max={70} step={5}
+   826→                      value={filters.rsiMin}
+   827→                      onChange={(e) => setFilters({ ...filters, rsiMin: Number(e.target.value) })}
+   828→                      className="w-full accent-primary"
+   829→                    />
+   830→                    <div className="flex justify-between text-[9px] text-muted-foreground">
+   831→                      <span>40 (loose)</span>
+   832→                      <span>55 (original)</span>
+   833→                      <span>70 (strict)</span>
+   834→                    </div>
+   835→                  </div>
+   836→                  <div>
+   837→                    <div className="flex items-center justify-between mb-1">
+   838→                      <Label className="text-xs font-medium">Min Market Cap (₹ Cr)</Label>
+   839→                      <span className="text-xs font-bold tabular-nums text-primary">₹{filters.mcapMin}</span>
+   840→                    </div>
+   841→                    <input
+   842→                      type="range" min={100} max={2000} step={100}
+   843→                      value={filters.mcapMin}
+   844→                      onChange={(e) => setFilters({ ...filters, mcapMin: Number(e.target.value) })}
+   845→                      className="w-full accent-primary"
+   846→                    />
+   847→                    <div className="flex justify-between text-[9px] text-muted-foreground">
+   848→                      <span>₹100</span>
+   849→                      <span>₹500 (orig)</span>
+   850→                      <span>₹2,000</span>
+   851→                    </div>
+   852→                  </div>
+   853→                  <div>
+   854→                    <div className="flex items-center justify-between mb-1">
+   855→                      <Label className="text-xs font-medium">Min 30D Avg Volume</Label>
+   856→                      <span className="text-xs font-bold tabular-nums text-primary">{filters.volMin.toLocaleString("en-IN")}</span>
+   857→                    </div>
+   858→                    <input
+   859→                      type="range" min={10000} max={100000} step={5000}
+   860→                      value={filters.volMin}
+   861→                      onChange={(e) => setFilters({ ...filters, volMin: Number(e.target.value) })}
+   862→                      className="w-full accent-primary"
+   863→                    />
+   864→                    <div className="flex justify-between text-[9px] text-muted-foreground">
+   865→                      <span>10k</span>
+   866→                      <span>50k (orig)</span>
+   867→                      <span>100k</span>
+   868→                    </div>
+   869→                  </div>
+   870→                  <div className="flex gap-2 pt-2 border-t border-border/40">
+   871→                    <Button
+   872→                      size="sm"
+   873→                      className="h-7 flex-1 text-[11px]"
+   874→                      onClick={() => {
+   875→                        setFilters({ rsiMin: 50, mcapMin: 200, volMin: 20000 });
+   876→                        toast({ title: "Reset to loosened defaults", description: "RSI>50, MCap>₹200Cr, Vol>20k" });
+   877→                      }}
+   878→                      variant="outline"
+   879→                    >
+   880→                      Reset defaults
+   881→                    </Button>
+   882→                    <Button
+   883→                      size="sm"
+   884→                      className="h-7 flex-1 text-[11px]"
+   885→                      onClick={() => {
+   886→                        setFilters({ rsiMin: 55, mcapMin: 500, volMin: 50000 });
+   887→                        toast({ title: "Restored original strategy", description: "RSI>55, MCap>₹500Cr, Vol>50k" });
+   888→                      }}
+   889→                      variant="outline"
+   890→                    >
+   891→                      Original (strict)
+   892→                    </Button>
+   893→                  </div>
+   894→                  <Button
+   895→                    size="sm"
+   896→                    className="h-8 w-full text-[11px]"
+   897→                    onClick={() => runScreen(false, undefined, filters)}
+   898→                    disabled={running === "screen"}
+   899→                  >
+   900→                    <RefreshCw className={`w-3 h-3 mr-1.5 ${running === "screen" ? "animate-spin" : ""}`} />
+   901→                    Apply &amp; Re-run Screen
+   902→                  </Button>
+   903→                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+   904→                    Loosened defaults (RSI&gt;50, MCap&gt;₹200Cr, Vol&gt;20k) typically yield 25-30 qualifiers from the 511-stock universe.
+   905→                    Original strategy rules (RSI&gt;55, MCap&gt;₹500Cr, Vol&gt;50k) typically yield 10-12.
+   906→                  </p>
+   907→                </div>
+   908→              </PopoverContent>
+   909→            </Popover>
+   910→          </div>
+   911→        </div>
+   912→      </header>
+   913→
+   914→      {/* Desktop / tablet nav — top tabs, icon + label, hidden on mobile */}
+   915→      <nav className="hidden sm:block border-b border-border/60 bg-card/40 sticky top-[49px] z-10">
+   916→        <div className="max-w-7xl mx-auto px-3 sm:px-5">
+   917→          <Tabs value={tab} onValueChange={setTab} className="w-full">
+   918→            <TabsList className="grid w-full grid-cols-6 h-9 bg-transparent p-0 rounded-none border-b-0">
+   919→              <TabsTrigger value="screen" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+   920→                <Target className="w-3.5 h-3.5" /> Screen
+   921→              </TabsTrigger>
+   922→              <TabsTrigger value="alloc" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+   923→                <Wallet className="w-3.5 h-3.5" /> Allocation
+   924→              </TabsTrigger>
+   925→              <TabsTrigger value="stops" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+   926→                <ShieldAlert className="w-3.5 h-3.5" /> Stop-Loss
+   927→              </TabsTrigger>
+   928→              <TabsTrigger value="stress" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+   929→                <Zap className="w-3.5 h-3.5" /> Stress
+   930→              </TabsTrigger>
+   931→              <TabsTrigger value="backtest" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+   932→                <History className="w-3.5 h-3.5" /> Backtest
+   933→              </TabsTrigger>
+   934→              <TabsTrigger value="risk" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+   935→                <GitCompare className="w-3.5 h-3.5" /> Risk
+   936→              </TabsTrigger>
+   937→            </TabsList>
+   938→          </Tabs>
+   939→        </div>
+   940→      </nav>
+   941→
+   942→      {/* Main content — adds bottom padding on mobile for bottom nav */}
+   943→      <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-5 py-3 sm:py-4 pb-20 sm:pb-6">
+   944→        <Tabs value={tab} onValueChange={setTab} className="w-full">
+   945→          {/* ============================== Screen tab ============================== */}
+   946→          <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
+   947→            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} />
+   948→          </TabsContent>
+   949→
+   950→          {/* ============================== Allocation tab ============================== */}
+   951→          <TabsContent value="alloc">
+   952→            <AllocationPanel
+   953→              screen={screen}
+   954→              alloc={alloc}
+   955→              totalInvestment={totalInvestment}
+   956→              setTotalInvestment={setTotalInvestment}
+   957→              runAllocation={runAllocation}
+   958→              allocDirty={allocDirty}
+   959→              onGoToStops={() => setTab("stops")}
+   960→              onGoToStress={() => setTab("stress")}
+   961→              allocationMode={allocationMode}
+   962→              setAllocationMode={setAllocationMode}
+   963→              rebalance={rebalance}
+   964→              runRebalance={runRebalance}
+   965→              rebalanceRunning={rebalanceRunning}
+   966→            />
+   967→          </TabsContent>
+   968→
+   969→          {/* ============================== Stop-Loss tab ============================== */}
+   970→          <TabsContent value="stops">
+   971→            <StopLossPanel stops={stops} running={running === "stops"} onRefresh={runStops} hasAlloc={!!alloc} onGoToAlloc={() => setTab("alloc")} />
+   972→          </TabsContent>
+   973→
+   974→          {/* ============================== Stress tab ============================== */}
+   975→          <TabsContent value="stress">
+   976→            <StressPanel stress={stress} onRun={runStress} hasAlloc={!!alloc} onGoToAlloc={() => setTab("alloc")} />
+   977→          </TabsContent>
+   978→
+   979→          {/* ============================== Backtest tab ============================== */}
+   980→          <TabsContent value="backtest">
+   981→            <BacktestPanel backtest={backtest} running={backtestRunning} onRun={runBacktest} />
+   982→          </TabsContent>
+   983→
+   984→          {/* ============================== Risk tab ============================== */}
+   985→          <TabsContent value="risk">
+   986→            <RiskPanel
+   987→              correlation={correlation}
+   988→              running={correlationRunning}
+   989→              onRun={runCorrelation}
+   990→              hasAlloc={!!alloc}
+   991→              onGoToAlloc={() => setTab("alloc")}
+   992→            />
+   993→          </TabsContent>
+   994→        </Tabs>
+   995→      </main>
+   996→
+   997→      {/* Zerodha Connect Dialog */}
+   998→      {showZerodhaDialog && (
+   999→        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowZerodhaDialog(false)}>
+  1000→          <div className="bg-card rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+  1001→            <h2 className="text-lg font-bold mb-1">Connect Zerodha</h2>
+  1002→            <p className="text-xs text-muted-foreground mb-4">
+  1003→              Connect your Zerodha account for real-time data, no rate limits, and live portfolio sync.
+  1004→            </p>
+  1005→
+  1006→            {kiteConnected ? (
+  1007→              <div className="text-center py-4">
+  1008→                <div className="text-2xl mb-2">✅</div>
+  1009→                <p className="text-sm font-medium text-emerald-600">Connected to Zerodha!</p>
+  1010→                <Button variant="outline" size="sm" className="mt-3" onClick={() => setShowZerodhaDialog(false)}>
+  1011→                  Close
+  1012→                </Button>
+  1013→              </div>
+  1014→            ) : (
+  1015→              <div className="space-y-4">
+  1016→                {/* Option 1: OAuth login */}
+  1017→                <div>
+  1018→                  <a href="/api/zerodha/login">
+  1019→                    <Button className="w-full" variant="default">
+  1020→                      Login with Zerodha
+  1021→                    </Button>
+  1022→                  </a>
+  1023→                  <p className="text-[10px] text-muted-foreground mt-1 text-center">
+  1024→                    Redirects to Zerodha login page
+  1025→                  </p>
+  1026→                </div>
+  1027→
+  1028→                <div className="flex items-center gap-2">
+  1029→                  <div className="flex-1 h-px bg-border/40" />
+  1030→                  <span className="text-[10px] text-muted-foreground">OR</span>
+  1031→                  <div className="flex-1 h-px bg-border/40" />
+  1032→                </div>
+  1033→
+  1034→                {/* Option 2: Manual — paste the full redirect URL or just the token */}
+  1035→                <div>
+  1036→                  <Label className="text-xs font-medium">Manual: Paste URL or Token</Label>
+  1037→                  <p className="text-[10px] text-muted-foreground mb-2">
+  1038→                    1. Click this link:{" "}
+  1039→                    <a href="https://kite.zerodha.com/connect/login?api_key=mrotfrt78mmjv00p&v=3" target="_blank" className="text-primary underline">
+  1040→                      Open Zerodha Login
+  1041→                    </a><br />
+  1042→                    2. Log in and authorize<br />
+  1043→                    3. Copy the ENTIRE URL from the address bar (even if it shows an error page)<br />
+  1044→                    4. Paste it below
+  1045→                  </p>
+  1046→                  <Input
+  1047→                    placeholder="Paste the full URL here..."
+  1048→                    value={kiteToken}
+  1049→                    onChange={(e) => setKiteToken(e.target.value)}
+  1050→                    className="text-xs"
+  1051→                  />
+  1052→                  <Button
+  1053→                    className="w-full mt-2"
+  1054→                    variant="outline"
+  1055→                    size="sm"
+  1056→                    disabled={!kiteToken.trim() || kiteConnecting}
+  1057→                    onClick={async () => {
+  1058→                      setKiteConnecting(true);
+  1059→                      try {
+  1060→                        // Extract request_token from URL or use as-is
+  1061→                        let token = kiteToken.trim();
+  1062→                        if (token.includes("request_token=")) {
+  1063→                          try {
+  1064→                            const url = new URL(token);
+  1065→                            token = url.searchParams.get("request_token") || token;
+  1066→                          } catch {
+  1067→                            // Not a valid URL, try regex
+  1068→                            const match = token.match(/request_token=([^&]+)/);
+  1069→                            if (match) token = match[1];
+  1070→                          }
+  1071→                        }
+  1072→
+  1073→                        const res = await fetch("/api/zerodha/token", {
+  1074→                          method: "POST",
+  1075→                          headers: { "Content-Type": "application/json" },
+  1076→                          body: JSON.stringify({ request_token: token }),
+  1077→                        });
+  1078→                        if (res.ok) {
+  1079→                          setKiteConnected(true);
+  1080→                          toast({ title: "Connected to Zerodha!", description: "You can now use Zerodha data source" });
+  1081→                        } else {
+  1082→                          const err = await res.json();
+  1083→                          toast({ title: "Connection failed", description: err.error || "Unknown error", variant: "destructive" });
+  1084→                        }
+  1085→                      } catch {
+  1086→                        toast({ title: "Connection failed", description: "Network error", variant: "destructive" });
+  1087→                      } finally {
+  1088→                        setKiteConnecting(false);
+  1089→                      }
+  1090→                    }}
+  1091→                  >
+  1092→                    {kiteConnecting ? "Connecting..." : "Connect"}
+  1093→                  </Button>
+  1094→                </div>
+  1095→              </div>
+  1096→            )}
+  1097→          </div>
+  1098→        </div>
+  1099→      )}
+  1100→
+  1101→      {/* Footer — desktop only */}
+  1102→      <footer className="hidden sm:block border-t border-border/60 py-3 text-center text-[10px] text-muted-foreground">
+  1103→        Live data from Yahoo Finance / Zerodha Kite · RSI(14) Wilder · Universe: Nifty Total Market · Built with Next.js 16
+  1104→      </footer>
+  1105→
+  1106→      {/* Mobile bottom nav — app-style */}
+  1107→      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-card border-t border-border/60 backdrop-blur-md safe-area-pb">
+  1108→        <div className="grid grid-cols-6 h-14">
+  1109→          {[
+  1110→            { id: "screen", icon: Target, label: "Screen" },
+  1111→            { id: "alloc", icon: Wallet, label: "Alloc" },
+  1112→            { id: "stops", icon: ShieldAlert, label: "Stops" },
+  1113→            { id: "stress", icon: Zap, label: "Stress" },
+  1114→            { id: "backtest", icon: History, label: "Btest" },
+  1115→            { id: "risk", icon: GitCompare, label: "Risk" },
+  1116→          ].map((t) => {
+  1117→            const Icon = t.icon;
+  1118→            const active = tab === t.id;
+  1119→            return (
+  1120→              <button
+  1121→                key={t.id}
+  1122→                onClick={() => setTab(t.id)}
+  1123→                className={`flex flex-col items-center justify-center gap-0.5 transition-colors ${active ? "text-primary" : "text-muted-foreground"}`}
+  1124→              >
+  1125→                <Icon className={`w-4 h-4 ${active ? "stroke-[2.5]" : ""}`} />
+  1126→                <span className={`text-[9px] ${active ? "font-semibold" : ""}`}>{t.label}</span>
+  1127→                {active && <div className="absolute top-0 w-8 h-0.5 bg-primary rounded-full" />}
+  1128→              </button>
+  1129→            );
+  1130→          })}
+  1131→        </div>
+  1132→      </nav>
+  1133→    </div>
+  1134→  );
+  1135→}
+  1136→
+  1137→/* ---------------------------------------------------------------- ScreenPanel */
+  1138→function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void }) {
+  1139→  if (running && !screen) {
+  1140→    const elapsed = elapsedMs ? (elapsedMs / 1000).toFixed(1) : "0.0";
+  1141→    const pct = Math.min(95, (elapsedMs || 0) / 300); // ~30s estimated total
+  1142→    return (
+  1143→      <Card className="card-pastel">
+  1144→        <CardContent className="p-8">
+  1145→          <div className="flex flex-col items-center justify-center text-center space-y-4">
+  1146→            <div className="relative">
+  1147→              <RefreshCw className="w-12 h-12 text-primary animate-spin" />
+  1148→            </div>
+  1149→            <div>
+  1150→              <h3 className="text-base font-semibold text-foreground">Fetching live market data…</h3>
+  1151→              <p className="text-sm text-muted-foreground mt-1">
+  1152→                Downloading 18 months of OHLCV for ~344 NSE stocks, computing RSI/MA/returns, then fetching market cap + sector for qualifiers.
+  1153→              </p>
+  1154→            </div>
+  1155→            <div className="w-full max-w-md space-y-2">
+  1156→              <Progress value={pct} className="h-2" />
+  1157→              <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+  1158→                <span>{elapsed}s elapsed</span>
+  1159→                <span>est. 25-30s total</span>
+  1160→              </div>
+  1161→            </div>
+  1162→            <div className="grid grid-cols-3 gap-2 w-full max-w-md text-xs">
+  1163→              <div className="pastel-info rounded-md p-2 text-center">
+  1164→                <div className="font-bold tabular-nums">1</div>
+  1165→                <div className="text-[10px] opacity-80">Download OHLCV</div>
+  1166→              </div>
+  1167→              <div className="pastel-warning rounded-md p-2 text-center">
+  1168→                <div className="font-bold tabular-nums">2</div>
+  1169→                <div className="text-[10px] opacity-80">Compute indicators</div>
+  1170→              </div>
+  1171→              <div className="pastel-purple rounded-md p-2 text-center">
+  1172→                <div className="font-bold tabular-nums">3</div>
+  1173→                <div className="text-[10px] opacity-80">Fetch market cap</div>
+  1174→              </div>
+  1175→            </div>
+  1176→          </div>
+  1177→        </CardContent>
+  1178→      </Card>
+  1179→    );
+  1180→  }
+  1181→  if (!screen) {
+  1182→    return (
+  1183→      <Card className="card-pastel">
+  1184→        <CardHeader>
+  1185→          <CardTitle className="flex items-center gap-2"><TrendingUp className="w-5 h-5 text-primary" /> Momentum Screen — Not yet run</CardTitle>
+  1186→          <CardDescription>
+  1187→            Click <b>Run Screen</b> at the top to fetch live data for ~{350} NSE stocks and apply the 6 momentum rules.
+  1188→          </CardDescription>
+  1189→        </CardHeader>
+  1190→        <CardContent>
+  1191→          <div className="rounded-lg border border-dashed border-slate-300 p-6 text-sm text-muted-foreground">
+  1192→            <p className="mb-2 font-medium text-foreground dark:text-muted-foreground/50">Screening rules:</p>
+  1193→            <ul className="list-disc pl-5 space-y-1">
+  1194→              <li>Current Price &gt; 200 DMA</li>
+  1195→              <li>Current Price &gt; 50 DMA</li>
+  1196→              <li>50 DMA &gt; 200 DMA</li>
+  1197→              <li>RSI(14) &gt; {filters.rsiMin}</li>
+  1198→              <li>Market Cap &gt; ₹{filters.mcapMin} Cr</li>
+  1199→              <li>30-day Avg Volume &gt; {filters.volMin.toLocaleString("en-IN")}</li>
+  1200→              <li><b>Sort</b>: 6-Month Price Return % DESC, top {topN}</li>
+  1201→            </ul>
+  1202→          </div>
+  1203→        </CardContent>
+  1204→      </Card>
+  1205→    );
+  1206→  }
+  1207→  return (
+  1208→    <div className="space-y-4">
+  1209→      {/* Error/warning banner — Yahoo rate-limited or showing stale/fallback data */}
+  1210→      {(screen.error || screen.warning) && (
+  1211→        <Card className={`card-pastel ${screen.error ? "border-red-300/60 bg-red-50/50" : "border-amber-300/60 bg-amber-50/50"}`}>
+  1212→          <CardContent className="p-4 flex items-start gap-3">
+  1213→            <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${screen.error ? "text-red-600" : "text-amber-600"}`} />
+  1214→            <div className="flex-1">
+  1215→              <p className={`text-sm font-medium ${screen.error ? "text-red-900" : "text-amber-900"}`}>
+  1216→                {screen.error
+  1217→                  ? "Yahoo Finance rate-limited"
+  1218→                  : screen.fallback
+  1219→                    ? "Showing fallback data"
+  1220→                    : screen.stale
+  1221→                      ? "Showing cached data"
+  1222→                      : "Notice"}
+  1223→              </p>
+  1224→              <p className={`text-xs mt-1 ${screen.error ? "text-red-700" : "text-amber-700"}`}>
+  1225→                {screen.error || screen.warning}
+  1226→              </p>
+  1227→              <p className={`text-xs mt-2 ${screen.error ? "text-red-600" : "text-amber-600"}`}>
+  1228→                {screen.error
+  1229→                  ? "The screen will auto-retry. You can also click \"Run Screen\" again in a minute."
+  1230→                  : "Data below is from an earlier successful fetch. Click \"Run Screen\" to try fetching fresh data."}
+  1231→              </p>
+  1232→            </div>
+  1233→          </CardContent>
+  1234→        </Card>
+  1235→      )}
+  1236→      {/* Stats */}
+  1237→      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+  1238→        <StatCard icon={<Activity className="w-4 h-4" />} label="Universe" value={String(screen.universeSize)} sub="NSE stocks" />
+  1239→        <StatCard icon={<TrendingUp className="w-4 h-4" />} label="With full data" value={String(screen.passedData)} sub="18-month OHLCV" />
+  1240→        <StatCard icon={<Gauge className="w-4 h-4" />} label="Pass technical" value={String(screen.passedTech)} sub="MA + RSI + Vol" />
+  1241→        <StatCard icon={<Wallet className="w-4 h-4" />} label="Pass market cap" value={String(screen.passedMc)} sub="> ₹500 Cr" tone="emerald" />
+  1242→      </div>
+  1243→
+  1244→      {/* Change History — shows when stocks were added/removed with dates */}
+  1245→      {changeHistory && changeHistory.length > 0 && (
+  1246→        <Card className="card-pastel">
+  1247→          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+  1248→            <div>
+  1249→              <CardTitle className="flex items-center gap-2 text-base">
+  1250→                <History className="w-4 h-4 text-primary" /> Change History
+  1251→              </CardTitle>
+  1252→              <CardDescription className="text-[10px] mt-0.5">
+  1253→                When stocks entered or left your Top {topN} · persisted across sessions
+  1254→              </CardDescription>
+  1255→            </div>
+  1256→            {onClearHistory && (
+  1257→              <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground" onClick={onClearHistory}>
+  1258→                Clear
+  1259→              </Button>
+  1260→            )}
+  1261→          </CardHeader>
+  1262→          <CardContent className="pt-0">
+  1263→            <div className="space-y-3 max-h-72 overflow-y-auto scroll-pastel">
+  1264→              {/* Show most recent first */}
+  1265→              {[...changeHistory].reverse().slice(0, 10).map((change, idx) => {
+  1266→                const date = new Date(change.date);
+  1267→                const dateStr = fmtISTDate(change.date);
+  1268→                const timeStr = fmtISTTime(change.date);
+  1269→                const isMostRecent = idx === 0;
+  1270→                return (
+  1271→                  <div key={change.date} className={`p-3 rounded-lg border ${isMostRecent ? "border-primary/30 bg-primary/5" : "border-border/40"}`}>
+  1272→                    <div className="flex items-center justify-between mb-2">
+  1273→                      <div className="flex items-center gap-2">
+  1274→                        <span className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded ${isMostRecent ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+  1275→                          {dateStr}
+  1276→                        </span>
+  1277→                        <span className="text-[10px] text-muted-foreground tabular-nums">{timeStr}</span>
+  1278→                        {isMostRecent && <span className="text-[9px] font-semibold text-primary uppercase tracking-wide">Latest</span>}
+  1279→                      </div>
+  1280→                      <span className="text-[10px] text-muted-foreground">
+  1281→                        {change.added.length > 0 || change.removed.length > 0
+  1282→                          ? `${change.added.length} added · ${change.removed.length} removed`
+  1283→                          : "No changes"}
+  1284→                      </span>
+  1285→                    </div>
+  1286→                    <div className="space-y-1.5">
+  1287→                      {change.added.length > 0 && (
+  1288→                        <div className="flex flex-wrap items-center gap-1">
+  1289→                          <span className="text-[9px] font-semibold text-emerald-600 mr-1">↑</span>
+  1290→                          {change.added.map((s) => (
+  1291→                            <span key={s.symbol} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium pastel-positive">
+  1292→                              {s.symbol}
+  1293→                              <span className="opacity-60">+{s.ret6mPct.toFixed(0)}%</span>
+  1294→                            </span>
+  1295→                          ))}
+  1296→                        </div>
+  1297→                      )}
+  1298→                      {change.removed.length > 0 && (
+  1299→                        <div className="flex flex-wrap items-center gap-1">
+  1300→                          <span className="text-[9px] font-semibold text-red-600 mr-1">↓</span>
+  1301→                          {change.removed.map((sym) => (
+  1302→                            <span key={sym} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium pastel-negative line-through opacity-70">
+  1303→                              {sym}
+  1304→                            </span>
+  1305→                          ))}
+  1306→                        </div>
+  1307→                      )}
+  1308→                    </div>
+  1309→                  </div>
+  1310→                );
+  1311→              })}
+  1312→            </div>
+  1313→          </CardContent>
+  1314→        </Card>
+  1315→      )}
+  1316→
+  1317→      {/* Top 10 table */}
+  1318→      <Card className="card-pastel">
+  1319→        <CardHeader>
+  1320→          <CardTitle>Top {screen.top10.length} Momentum Stocks</CardTitle>
+  1321→          <CardDescription>
+  1322→            Ranked by 6-month price return % · Screen took {(screen.elapsedMs / 1000).toFixed(1)}s · as of {fmtISTDateTime(screen.runAt)}
+  1323→          </CardDescription>
+  1324→        </CardHeader>
+  1325→        <CardContent>
+  1326→          {screen.top10.length === 0 ? (
+  1327→            <div className="p-6 text-center space-y-3">
+  1328→              <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
+  1329→              <div>
+  1330→                <p className="text-sm font-medium text-foreground">No stocks passed the filters</p>
+  1331→                <p className="text-xs text-muted-foreground mt-1">
+  1332→                  This is usually because Yahoo Finance rate-limited the market cap lookup. Try again in 30 seconds.
+  1333→                </p>
+  1334→              </div>
+  1335→              <p className="text-xs text-muted-foreground">
+  1336→                {screen.passedTech} stocks passed technical filters but market cap data couldn't be fetched for all of them.
+  1337→              </p>
+  1338→            </div>
+  1339→          ) : (
+  1340→          <div className="overflow-x-auto">
+  1341→            <Table>
+  1342→              <TableHeader>
+  1343→                <TableRow>
+  1344→                  <TableHead className="w-12">#</TableHead>
+  1345→                  <TableHead>Symbol</TableHead>
+  1346→                  <TableHead className="hidden md:table-cell">Sector</TableHead>
+  1347→                  <TableHead className="text-right">Price (₹)</TableHead>
+  1348→                  <TableHead className="text-right">RSI</TableHead>
+  1349→                  <TableHead className="text-right hidden sm:table-cell">MCap (₹Cr)</TableHead>
+  1350→                  <TableHead className="text-right">1M %</TableHead>
+  1351→                  <TableHead className="text-right">3M %</TableHead>
+  1352→                  <TableHead className="text-right">6M %</TableHead>
+  1353→                  <TableHead className="text-right hidden lg:table-cell">Sharpe</TableHead>
+  1354→                  <TableHead className="text-right hidden md:table-cell">Mom. Score</TableHead>
+  1355→                </TableRow>
+  1356→              </TableHeader>
+  1357→              <TableBody>
+  1358→                {screen.top10.map((s) => (
+  1359→                  <TableRow key={s.symbol}>
+  1360→                    <TableCell className="font-bold text-muted-foreground/70">{s.rank}</TableCell>
+  1361→                    <TableCell>
+  1362→                      <div className="font-semibold">{s.symbol}</div>
+  1363→                      <div className="text-xs text-muted-foreground line-clamp-1 max-w-[160px]">{s.longName}</div>
+  1364→                    </TableCell>
+  1365→                    <TableCell className="hidden md:table-cell text-muted-foreground">{s.sector}</TableCell>
+  1366→                    <TableCell className="text-right tabular-nums">{fmt(s.currentPrice)}</TableCell>
+  1367→                    <TableCell className="text-right">
+  1368→                      <RsiBadge rsi={s.rsi14} />
+  1369→                    </TableCell>
+  1370→                    <TableCell className="text-right hidden sm:table-cell tabular-nums">{fmt(s.marketCapCr, 0)}</TableCell>
+  1371→                    <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1mPct} /></TableCell>
+  1372→                    <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret3mPct} /></TableCell>
+  1373→                    <TableCell className="text-right tabular-nums font-semibold"><ReturnCell pct={s.ret6mPct} /></TableCell>
+  1374→                    <TableCell className="text-right hidden lg:table-cell tabular-nums">{fmt(s.sharpe)}</TableCell>
+  1375→                    <TableCell className="text-right hidden md:table-cell">
+  1376→                      <MomentumScoreBadge score={s.momentumScore} />
+  1377→                    </TableCell>
+  1378→                  </TableRow>
+  1379→                ))}
+  1380→              </TableBody>
+  1381→            </Table>
+  1382→          </div>
+  1383→          )}
+  1384→        </CardContent>
+  1385→      </Card>
+  1386→    </div>
+  1387→  );
+  1388→}
+  1389→
+  1390→/* ---------------------------------------------------------------- AllocationPanel */
+  1391→function AllocationPanel({
+  1392→  screen, alloc, totalInvestment, setTotalInvestment, runAllocation, allocDirty, onGoToStops, onGoToStress,
+  1393→  allocationMode, setAllocationMode,
+  1394→  rebalance, runRebalance, rebalanceRunning,
+  1395→}: {
+  1396→  screen: ScreenResponse | null;
+  1397→  alloc: AllocateResponse | null;
+  1398→  totalInvestment: number;
+  1399→  setTotalInvestment: (n: number) => void;
+  1400→  runAllocation: () => void;
+  1401→  allocDirty: boolean;
+  1402→  onGoToStops: () => void;
+  1403→  onGoToStress: () => void;
+  1404→  allocationMode: "risk-parity" | "momentum";
+  1405→  setAllocationMode: (m: "risk-parity" | "momentum") => void;
+  1406→  rebalance: RebalanceResult | null;
+  1407→  runRebalance: () => void;
+  1408→  rebalanceRunning: boolean;
+  1409→}) {
+  1410→  if (!screen) {
+  1411→    return (
+  1412→      <Card className="card-pastel"><CardHeader>
+  1413→        <CardTitle>Portfolio Allocation</CardTitle>
+  1414→        <CardDescription>Run the screen first to enable allocation.</CardDescription>
+  1415→      </CardHeader></Card>
+  1416→    );
+  1417→  }
+  1418→  return (
+  1419→    <div className="space-y-4">
+  1420→      {/* Investment input + allocation mode toggle */}
+  1421→      <Card className="card-pastel">
+  1422→        <CardHeader>
+  1423→          <CardTitle className="flex items-center gap-2"><Wallet className="w-5 h-5 text-primary" /> Investment Amount</CardTitle>
+  1424→          <CardDescription>Enter your total capital to allocate across the Top {screen?.top10.length ?? 10} momentum stocks.</CardDescription>
+  1425→        </CardHeader>
+  1426→        <CardContent>
+  1427→          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+  1428→            <div className="flex-1">
+  1429→              <Label htmlFor="amount">Total Investment (₹)</Label>
+  1430→              <Input
+  1431→                id="amount"
+  1432→                type="number"
+  1433→                value={totalInvestment}
+  1434→                onChange={(e) => { setTotalInvestment(Number(e.target.value)); setAllocDirty(true); }}
+  1435→                className="mt-1"
+  1436→                step={10000}
+  1437→                min={50000}
+  1438→              />
+  1439→            </div>
+  1440→            <Button onClick={runAllocation} disabled={!screen}>
+  1441→              {allocDirty || !alloc ? "Compute Allocation" : "Recompute"}
+  1442→            </Button>
+  1443→            {alloc && (
+  1444→              <>
+  1445→                <Button variant="outline" onClick={onGoToStops}><ShieldAlert className="w-4 h-4 mr-2" /> Check Stops</Button>
+  1446→                <Button variant="outline" onClick={onGoToStress}><Zap className="w-4 h-4 mr-2" /> Stress Test</Button>
+  1447→              </>
+  1448→            )}
+  1449→          </div>
+  1450→
+  1451→          {/* Allocation mode toggle */}
+  1452→          <div className="mt-4 p-3 rounded-lg bg-muted/50 border border-border/40">
+  1453→            <div className="flex items-center justify-between mb-2">
+  1454→              <Label className="text-xs font-medium text-foreground">Allocation Engine</Label>
+  1455→              <div className="flex rounded-md bg-background border border-border overflow-hidden">
+  1456→                <button
+  1457→                  onClick={() => setAllocationMode("risk-parity")}
+  1458→                  className={`px-3 py-1 text-[11px] font-medium transition-colors ${allocationMode === "risk-parity" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+  1459→                >
+  1460→                  Risk Parity
+  1461→                </button>
+  1462→                <button
+  1463→                  onClick={() => setAllocationMode("momentum")}
+  1464→                  className={`px-3 py-1 text-[11px] font-medium transition-colors ${allocationMode === "momentum" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+  1465→                >
+  1466→                  Momentum-weighted
+  1467→                </button>
+  1468→              </div>
+  1469→            </div>
+  1470→            <p className="text-[10px] text-muted-foreground">
+  1471→              {allocationMode === "risk-parity"
+  1472→                ? "Inverse-volatility × RSI penalty · Hard caps: 15% per stock, 25% per sector, 5% floor. Equal risk contribution."
+  1473→                : "Momentum score² weighting · Soft caps: 25% per stock, 40% per sector, 3% floor. Stronger momentum = larger position."}
+  1474→            </p>
+  1475→            {alloc && allocationMode !== alloc.mode && (
+  1476→              <p className="text-[10px] text-amber-600 mt-1">
+  1477→                ⚠ Mode changed — click "Recompute" to apply the new engine
+  1478→              </p>
+  1479→            )}
+  1480→          </div>
+  1481→
+  1482→          {/* Rebalance button — appears when allocation exists */}
+  1483→          {alloc && (
+  1484→            <div className="mt-3 p-3 rounded-lg pastel-purple/30 border border-purple-200/40">
+  1485→              <div className="flex items-center justify-between gap-3">
+  1486→                <div className="min-w-0">
+  1487→                  <p className="text-xs font-medium text-foreground">Dynamic Rebalance</p>
+  1488→                  <p className="text-[10px] text-muted-foreground mt-0.5">
+  1489→                    Compare current holdings to fresh screen. Buy more if momentum rose, trim if it fell, exit if it died.
+  1490→                  </p>
+  1491→                </div>
+  1492→                <Button onClick={runRebalance} disabled={rebalanceRunning} size="sm" variant="outline" className="shrink-0">
+  1493→                  <RefreshCw className={`w-3 h-3 mr-1.5 ${rebalanceRunning ? "animate-spin" : ""}`} />
+  1494→                  {rebalanceRunning ? "Computing…" : "Run Rebalance"}
+  1495→                </Button>
+  1496→              </div>
+  1497→            </div>
+  1498→          )}
+  1499→        </CardContent>
+  1500→      </Card>
+  1501→
+  1502→      {/* Rebalance results table */}
+  1503→      {rebalance && (
+  1504→        <RebalancePanel rebalance={rebalance} />
+  1505→      )}
+  1506→
+  1507→      {alloc && (
+  1508→        <>
+  1509→          {/* Summary stats */}
+  1510→          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+  1511→            <StatCard icon={<Wallet className="w-4 h-4" />} label="Allocated" value={fmtINR(alloc.totalAllocated)} sub={`${fmt(alloc.totalAllocated / alloc.totalInvested * 100, 1)}% of capital`} />
+  1512→            <StatCard icon={<Activity className="w-4 h-4" />} label="Cash leftover" value={fmtINR(alloc.cashLeftover)} sub="from share rounding" />
+  1513→            <StatCard icon={<TrendingUp className="w-4 h-4" />} label="Weighted 6M ret" value={fmtPct(alloc.allocation.reduce((a, s) => a + s.weight * s.ret6mPct, 0) / alloc.allocation.reduce((a, s) => a + s.weight, 0))} sub="portfolio momentum" tone="emerald" />
+  1514→            <StatCard icon={<Gauge className="w-4 h-4" />} label="Weighted vol" value={`${fmt(alloc.allocation.reduce((a, s) => a + s.weight * s.annVolPct, 0))}%`} sub="annualized" tone="amber" />
+  1515→          </div>
+  1516→
+  1517→          {/* Removed stocks banner — stocks that couldn't be afforded with allocated rupees */}
+  1518→          {alloc.removedStocks.length > 0 && (
+  1519→            <Card className="card-pastel border-amber-300/60 bg-amber-50/40">
+  1520→              <CardContent className="p-4">
+  1521→                <div className="flex items-start gap-3">
+  1522→                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+  1523→                  <div className="flex-1 min-w-0">
+  1524→                    <p className="text-sm font-medium text-amber-900">
+  1525→                      {alloc.removedStocks.length} stock{alloc.removedStocks.length > 1 ? "s" : ""} removed — price exceeded allocation
+  1526→                    </p>
+  1527→                    <p className="text-xs text-amber-700 mt-1 mb-3">
+  1528→                      These stocks were too expensive to buy even 1 share with their allocated rupees.
+  1529→                      Their weight has been redistributed to the remaining {alloc.allocation.length} stocks.
+  1530→                    </p>
+  1531→                    <div className="flex flex-wrap gap-1.5">
+  1532→                      {alloc.removedStocks.map((s) => (
+  1533→                        <span
+  1534→                          key={s.symbol}
+  1535→                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-200"
+  1536→                          title={s.reason}
+  1537→                        >
+  1538→                          {s.symbol}
+  1539→                          <span className="opacity-70">₹{s.currentPrice.toFixed(0)}</span>
+  1540→                          <span className="opacity-50">→</span>
+  1541→                          <span className="opacity-70">₹{s.attemptedRupees.toFixed(0)}</span>
+  1542→                        </span>
+  1543→                      ))}
+  1544→                    </div>
+  1545→                  </div>
+  1546→                </div>
+  1547→              </CardContent>
+  1548→            </Card>
+  1549→          )}
+  1550→
+  1551→          {/* Allocation table */}
+  1552→          <Card className="card-pastel">
+  1553→            <CardHeader>
+  1554→              <CardTitle>Allocation Breakdown — {fmtINR(alloc.totalInvested)}</CardTitle>
+  1555→              <CardDescription>
+  1556→                Inverse-volatility base × RSI penalty · Max 15% per stock · Max 25% per sector
+  1557→                {alloc.removedStocks.length > 0 && ` · ${alloc.allocation.length} of ${alloc.allocation.length + alloc.removedStocks.length} stocks affordable`}
+  1558→              </CardDescription>
+  1559→            </CardHeader>
+  1560→            <CardContent>
+  1561→              <div className="overflow-x-auto">
+  1562→                <Table>
+  1563→                  <TableHeader>
+  1564→                    <TableRow>
+  1565→                      <TableHead className="w-12">#</TableHead>
+  1566→                      <TableHead>Symbol</TableHead>
+  1567→                      <TableHead className="hidden md:table-cell">Sector</TableHead>
+  1568→                      <TableHead className="text-right">Price (₹)</TableHead>
+  1569→                      <TableHead className="text-right">Weight</TableHead>
+  1570→                      <TableHead className="text-right">₹ Amount</TableHead>
+  1571→                      <TableHead className="text-right">Shares</TableHead>
+  1572→                      <TableHead className="text-right">6M %</TableHead>
+  1573→                      <TableHead className="text-right">RSI</TableHead>
+  1574→                      <TableHead className="hidden lg:table-cell">Notes</TableHead>
+  1575→                    </TableRow>
+  1576→                  </TableHeader>
+  1577→                  <TableBody>
+  1578→                    {alloc.allocation.map((s, i) => (
+  1579→                      <TableRow key={s.symbol}>
+  1580→                        <TableCell className="font-bold text-muted-foreground/70">{i + 1}</TableCell>
+  1581→                        <TableCell className="font-semibold">{s.symbol}</TableCell>
+  1582→                        <TableCell className="hidden md:table-cell text-muted-foreground">{s.sector}</TableCell>
+  1583→                        <TableCell className="text-right tabular-nums">{fmt(s.currentPrice)}</TableCell>
+  1584→                        <TableCell className="text-right font-semibold">
+  1585→                          <div className="flex items-center gap-2 justify-end">
+  1586→                            <Progress value={s.weight * 100} className="w-12 h-2" />
+  1587→                            {fmt(s.weight * 100, 2)}%
+  1588→                          </div>
+  1589→                        </TableCell>
+  1590→                        <TableCell className="text-right tabular-nums">{fmtINR(s.rupees)}</TableCell>
+  1591→                        <TableCell className="text-right tabular-nums">{s.shares}</TableCell>
+  1592→                        <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret6mPct} /></TableCell>
+  1593→                        <TableCell className="text-right"><RsiBadge rsi={s.rsi14} /></TableCell>
+  1594→                        <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{s.notes || "—"}</TableCell>
+  1595→                      </TableRow>
+  1596→                    ))}
+  1597→                  </TableBody>
+  1598→                </Table>
+  1599→              </div>
+  1600→            </CardContent>
+  1601→          </Card>
+  1602→
+  1603→          {/* Sector breakdown */}
+  1604→          <Card className="card-pastel">
+  1605→            <CardHeader>
+  1606→              <CardTitle>Sector Diversification</CardTitle>
+  1607→              <CardDescription>Max 25% per sector — ensures no single industry dominates the book</CardDescription>
+  1608→            </CardHeader>
+  1609→            <CardContent>
+  1610→              <div className="space-y-3">
+  1611→                {alloc.sectorBreakdown.map((s) => (
+  1612→                  <div key={s.sector} className="space-y-1">
+  1613→                    <div className="flex justify-between text-sm">
+  1614→                      <span className="font-medium">{s.sector} <span className="text-muted-foreground">({s.count} stock{s.count > 1 ? "s" : ""})</span></span>
+  1615→                      <span className="tabular-nums">{fmt(s.weight * 100, 2)}% · {fmtINR(s.rupees)}</span>
+  1616→                    </div>
+  1617→                    <Progress value={s.weight * 100} className="h-2" />
+  1618→                  </div>
+  1619→                ))}
+  1620→              </div>
+  1621→            </CardContent>
+  1622→          </Card>
+  1623→        </>
+  1624→      )}
+  1625→    </div>
+  1626→  );
+  1627→}
+  1628→
+  1629→/* ---------------------------------------------------------------- StopLossPanel */
+  1630→function StopLossPanel({ stops, running, onRefresh, hasAlloc, onGoToAlloc }: {
+  1631→  stops: StopsResponse | null;
+  1632→  running: boolean;
+  1633→  onRefresh: () => void;
+  1634→  hasAlloc: boolean;
+  1635→  onGoToAlloc: () => void;
+  1636→}) {
+  1637→  if (!hasAlloc) {
+  1638→    return (
+  1639→      <Card className="card-pastel"><CardHeader>
+  1640→        <CardTitle>Stop-Loss Monitor</CardTitle>
+  1641→        <CardDescription>You need an allocation first. <Button variant="link" className="p-0 h-auto" onClick={onGoToAlloc}>Go to Allocation →</Button></CardDescription>
+  1642→      </CardHeader></Card>
+  1643→    );
+  1644→  }
+  1645→  return (
+  1646→    <div className="space-y-4">
+  1647→      {/* Summary */}
+  1648→      {stops && (
+  1649→        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+  1650→          <StatCard icon={<Activity className="w-4 h-4" />} label="Total P&L" value={fmtINR(stops.totalPnl)} sub={fmtPct(stops.pnlPct)} tone={stops.totalPnl >= 0 ? "emerald" : "red"} />
+  1651→          <StatCard icon={<ShieldAlert className="w-4 h-4" />} label="HOLD" value={String(stops.statusCounts.HOLD)} sub="healthy" tone="emerald" />
+  1652→          <StatCard icon={<AlertTriangle className="w-4 h-4" />} label="WATCH" value={String(stops.statusCounts.WATCH)} sub="near stop" tone="amber" />
+  1653→          <StatCard icon={<TrendingDown className="w-4 h-4" />} label="EXIT" value={String(stops.statusCounts.EXIT)} sub="stop hit" tone="red" />
+  1654→          <StatCard icon={<Activity className="w-4 h-4" />} label="As of" value={fmtISTTime(stops.runAt)} sub="latest NSE close" />
+  1655→        </div>
+  1656→      )}
+  1657→
+  1658→      <Card className="card-pastel">
+  1659→        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+  1660→          <div>
+  1661→            <CardTitle className="flex items-center gap-2"><ShieldAlert className="w-5 h-5 text-primary" /> Stop-Loss Status</CardTitle>
+  1662→            <CardDescription>
+  1663→              Rules: Trend (close &lt; 50 DMA) · Hard stop (entry − 8%) · Trailing (peak × 0.85) · Watch zone (within 2%)
+  1664→            </CardDescription>
+  1665→          </div>
+  1666→          <Button onClick={onRefresh} disabled={running} size="sm" variant="outline">
+  1667→            <RefreshCw className={`w-4 h-4 mr-2 ${running ? "animate-spin" : ""}`} /> Refresh
+  1668→          </Button>
+  1669→        </CardHeader>
+  1670→        <CardContent>
+  1671→          {running && !stops ? <Skeleton className="h-48 w-full" /> : stops ? (
+  1672→            <div className="overflow-x-auto">
+  1673→              <Table>
+  1674→                <TableHeader>
+  1675→                  <TableRow>
+  1676→                    <TableHead>Symbol</TableHead>
+  1677→                    <TableHead className="text-right">Entry</TableHead>
+  1678→                    <TableHead className="text-right">Current</TableHead>
+  1679→                    <TableHead className="text-right hidden sm:table-cell">50 DMA</TableHead>
+  1680→                    <TableHead className="text-right hidden md:table-cell">Peak</TableHead>
+  1681→                    <TableHead className="text-right">Stop</TableHead>
+  1682→                    <TableHead className="text-right">P&L %</TableHead>
+  1683→                    <TableHead className="text-right hidden sm:table-cell">P&L ₹</TableHead>
+  1684→                    <TableHead className="text-center">Status</TableHead>
+  1685→                  </TableRow>
+  1686→                </TableHeader>
+  1687→                <TableBody>
+  1688→                  {stops.stops.map((s) => (
+  1689→                    <TableRow key={s.symbol}>
+  1690→                      <TableCell className="font-semibold">{s.symbol}</TableCell>
+  1691→                      <TableCell className="text-right tabular-nums">{fmt(s.entryPrice)}</TableCell>
+  1692→                      <TableCell className="text-right tabular-nums font-medium">{fmt(s.currentPrice)}</TableCell>
+  1693→                      <TableCell className="text-right hidden sm:table-cell tabular-nums">{fmt(s.dma50)}</TableCell>
+  1694→                      <TableCell className="text-right hidden md:table-cell tabular-nums">{fmt(s.peakSinceEntry)}</TableCell>
+  1695→                      <TableCell className="text-right tabular-nums text-[var(--color-pastel-red-text)]">{fmt(s.activeStop)}</TableCell>
+  1696→                      <TableCell className="text-right tabular-nums"><ReturnCell pct={s.pnlPct} /></TableCell>
+  1697→                      <TableCell className="text-right hidden sm:table-cell tabular-nums"><ReturnCell pct={s.pnlRupees} rupeeMode /></TableCell>
+  1698→                      <TableCell className="text-center"><StatusBadge status={s.status} /></TableCell>
+  1699→                    </TableRow>
+  1700→                  ))}
+  1701→                </TableBody>
+  1702→              </Table>
+  1703→              {stops.stops.some((s) => s.reasons) && (
+  1704→                <div className="mt-4 p-3 rounded-lg pastel-warning border text-xs">
+  1705→                  <div className="font-medium text-[var(--color-pastel-amber-text)] mb-1">⚠ Watch / Exit reasons:</div>
+  1706→                  <ul className="space-y-1 text-[var(--color-pastel-amber-text)]">
+  1707→                    {stops.stops.filter((s) => s.reasons).map((s) => (
+  1708→                      <li key={s.symbol}><b>{s.symbol}</b>: {s.reasons}</li>
+  1709→                    ))}
+  1710→                  </ul>
+  1711→                </div>
+  1712→              )}
+  1713→            </div>
+  1714→          ) : (
+  1715→            <div className="text-sm text-muted-foreground p-6 text-center">
+  1716→              Click <b>Refresh</b> to fetch live prices and apply stop rules.
+  1717→            </div>
+  1718→          )}
+  1719→        </CardContent>
+  1720→      </Card>
+  1721→    </div>
+  1722→  );
+  1723→}
+  1724→
+  1725→/* ---------------------------------------------------------------- StressPanel */
+  1726→function StressPanel({ stress, onRun, hasAlloc, onGoToAlloc }: {
+  1727→  stress: StressResponse | null;
+  1728→  onRun: () => void;
+  1729→  hasAlloc: boolean;
+  1730→  onGoToAlloc: () => void;
+  1731→}) {
+  1732→  if (!hasAlloc) {
+  1733→    return (
+  1734→      <Card className="card-pastel"><CardHeader>
+  1735→        <CardTitle>Stress Test</CardTitle>
+  1736→        <CardDescription>You need an allocation first. <Button variant="link" className="p-0 h-auto" onClick={onGoToAlloc}>Go to Allocation →</Button></CardDescription>
+  1737→      </CardHeader></Card>
+  1738→    );
+  1739→  }
+  1740→  return (
+  1741→    <div className="space-y-4">
+  1742→      <Card className="card-pastel">
+  1743→        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+  1744→          <div>
+  1745→            <CardTitle className="flex items-center gap-2"><Zap className="w-5 h-5 text-[var(--color-pastel-amber-text)]" /> Stress Test Scenarios</CardTitle>
+  1746→            <CardDescription>5 adverse scenarios simulated against your live allocation</CardDescription>
+  1747→          </div>
+  1748→          <Button onClick={onRun} size="sm" variant="outline">
+  1749→            <Zap className="w-4 h-4 mr-2" /> Run Stress Test
+  1750→          </Button>
+  1751→        </CardHeader>
+  1752→        <CardContent>
+  1753→          {stress ? (
+  1754→            <>
+  1755→              {/* Summary cards per scenario */}
+  1756→              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+  1757→                {stress.scenarios.map((sc) => (
+  1758→                  <Card key={sc.name} className={sc.drawdownPct > 15 ? " pastel-negative/50" : sc.drawdownPct > 10 ? " pastel-warning/50" : ""}>
+  1759→                    <CardContent className="p-4">
+  1760→                      <div className="flex items-start justify-between mb-2">
+  1761→                        <div>
+  1762→                          <div className="font-semibold text-sm">{sc.name}</div>
+  1763→                          <div className="text-xs text-muted-foreground mt-0.5">{sc.description}</div>
+  1764→                        </div>
+  1765→                      </div>
+  1766→                      <div className="grid grid-cols-2 gap-2 text-sm">
+  1767→                        <div>
+  1768→                          <div className="text-xs text-muted-foreground">Drawdown</div>
+  1769→                          <div className={`font-bold tabular-nums ${sc.drawdownPct > 15 ? "text-[var(--color-pastel-red-text)]" : sc.drawdownPct > 10 ? "text-[var(--color-pastel-amber-text)]" : "text-foreground"}`}>
+  1770→                            {sc.drawdownPct.toFixed(2)}%
+  1771→                          </div>
+  1772→                        </div>
+  1773→                        <div>
+  1774→                          <div className="text-xs text-muted-foreground">₹ Loss</div>
+  1775→                          <div className="font-bold tabular-nums text-[var(--color-pastel-red-text)]">{fmtINR(sc.totalLoss)}</div>
+  1776→                        </div>
+  1777→                        <div>
+  1778→                          <div className="text-xs text-muted-foreground"># Stocks hit</div>
+  1779→                          <div className="font-semibold tabular-nums">{sc.stocksHit}</div>
+  1780→                        </div>
+  1781→                        <div>
+  1782→                          <div className="text-xs text-muted-foreground">Worst stock</div>
+  1783→                          <div className="font-semibold text-xs">{sc.worstStockSymbol}</div>
+  1784→                        </div>
+  1785→                      </div>
+  1786→                    </CardContent>
+  1787→                  </Card>
+  1788→                ))}
+  1789→              </div>
+  1790→
+  1791→              {/* Resilience summary */}
+  1792→              <Card className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
+  1793→                <CardContent className="p-4">
+  1794→                  <div className="grid grid-cols-2 gap-4 text-center">
+  1795→                    <div>
+  1796→                      <div className="text-xs text-muted-foreground uppercase tracking-wide">Worst-case drawdown</div>
+  1797→                      <div className="text-2xl font-bold text-[var(--color-pastel-red-text)]">{stress.worstDrawdown.toFixed(2)}%</div>
+  1798→                      <div className="text-xs text-muted-foreground">{fmtINR(Math.abs(stress.worstLoss))} loss</div>
+  1799→                    </div>
+  1800→                    <div>
+  1801→                      <div className="text-xs text-muted-foreground uppercase tracking-wide">Recommended cash buffer</div>
+  1802→                      <div className="text-2xl font-bold text-[var(--color-pastel-amber-text)]">{fmtINR(Math.abs(stress.worstLoss))}</div>
+  1803→                      <div className="text-xs text-muted-foreground">to survive worst case</div>
+  1804→                    </div>
+  1805→                  </div>
+  1806→                </CardContent>
+  1807→              </Card>
+  1808→            </>
+  1809→          ) : (
+  1810→            <div className="text-sm text-muted-foreground p-6 text-center">
+  1811→              Click <b>Run Stress Test</b> to simulate 5 adverse scenarios against your current allocation.
+  1812→            </div>
+  1813→          )}
+  1814→        </CardContent>
+  1815→      </Card>
+  1816→
+  1817→      {/* Per-scenario detail tables */}
+  1818→      {stress && (
+  1819→        <Card className="card-pastel">
+  1820→          <CardHeader>
+  1821→            <CardTitle>Per-Stock Impact by Scenario</CardTitle>
+  1822→            <CardDescription>How each holding responds in each scenario</CardDescription>
+  1823→          </CardHeader>
+  1824→          <CardContent>
+  1825→            <div className="space-y-6">
+  1826→              {stress.scenarios.map((sc) => (
+  1827→                <div key={sc.name}>
+  1828→                  <div className="text-sm font-semibold mb-2 flex items-center justify-between">
+  1829→                    <span>{sc.name}</span>
+  1830→                    <Badge variant={sc.drawdownPct > 15 ? "destructive" : sc.drawdownPct > 10 ? "secondary" : "outline"}>
+  1831→                      {sc.drawdownPct.toFixed(2)}% drawdown
+  1832→                    </Badge>
+  1833→                  </div>
+  1834→                  <div className="overflow-x-auto">
+  1835→                    <Table>
+  1836→                      <TableHeader>
+  1837→                        <TableRow>
+  1838→                          <TableHead>Symbol</TableHead>
+  1839→                          <TableHead className="text-right">₹ Allocated</TableHead>
+  1840→                          <TableHead className="text-right">Shock %</TableHead>
+  1841→                          <TableHead className="text-right">₹ Loss</TableHead>
+  1842→                          <TableHead className="text-right">New Value</TableHead>
+  1843→                        </TableRow>
+  1844→                      </TableHeader>
+  1845→                      <TableBody>
+  1846→                        {sc.detail.map((d) => (
+  1847→                          <TableRow key={d.symbol}>
+  1848→                            <TableCell className="font-medium">{d.symbol}</TableCell>
+  1849→                            <TableCell className="text-right tabular-nums">{fmtINR(d.rupees)}</TableCell>
+  1850→                            <TableCell className="text-right tabular-nums text-[var(--color-pastel-red-text)]">{(d.shockPct * 100).toFixed(0)}%</TableCell>
+  1851→                            <TableCell className="text-right tabular-nums text-[var(--color-pastel-red-text)]">{fmtINR(d.rupeeLoss)}</TableCell>
+  1852→                            <TableCell className="text-right tabular-nums">{fmtINR(d.newValue)}</TableCell>
+  1853→                          </TableRow>
+  1854→                        ))}
+  1855→                      </TableBody>
+  1856→                    </Table>
+  1857→                  </div>
+  1858→                </div>
+  1859→              ))}
+  1860→            </div>
+  1861→          </CardContent>
+  1862→        </Card>
+  1863→      )}
+  1864→    </div>
+  1865→  );
+  1866→}
+  1867→
+  1868→/* ---------------------------------------------------------------- helpers */
+  1869→function StatCard({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: string; value: string; sub?: string; tone?: "emerald" | "amber" | "red" }) {
+  1870→  const toneBg = tone === "emerald" ? "pastel-positive" : tone === "amber" ? "pastel-warning" : tone === "red" ? "pastel-negative" : "";
+  1871→  const toneText = tone === "emerald" ? "text-[var(--color-pastel-green-text)]" : tone === "amber" ? "text-[var(--color-pastel-amber-text)]" : tone === "red" ? "text-[var(--color-pastel-red-text)]" : "text-foreground";
+  1872→  return (
+  1873→    <Card className="card-pastel">
+  1874→      <CardContent className="p-3">
+  1875→        <div className="flex items-center justify-between mb-1">
+  1876→          <span className="text-[9px] text-muted-foreground uppercase tracking-wide font-medium">{label}</span>
+  1877→          <span className={`${toneBg} rounded-md p-0.5 ${tone === "emerald" || tone === "amber" || tone === "red" ? "" : "bg-muted"} flex items-center`}>{icon}</span>
+  1878→        </div>
+  1879→        <div className={`text-base font-bold tabular-nums leading-tight ${toneText}`}>{value}</div>
+  1880→        {sub && <div className="text-[10px] text-muted-foreground mt-0.5 truncate">{sub}</div>}
+  1881→      </CardContent>
+  1882→    </Card>
+  1883→  );
+  1884→}
+  1885→
+  1886→function ReturnCell({ pct, rupeeMode }: { pct: number; rupeeMode?: boolean }) {
+  1887→  if (isNaN(pct)) return <span className="text-muted-foreground">—</span>;
+  1888→  const positive = pct >= 0;
+  1889→  const cls = positive ? "pastel-positive" : "pastel-negative";
+  1890→  const Icon = positive ? ArrowUp : ArrowDown;
+  1891→  const val = rupeeMode
+  1892→    ? `${pct >= 0 ? "+" : "−"}₹${Math.abs(Math.round(pct)).toLocaleString("en-IN")}`
+  1893→    : `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`;
+  1894→  return (
+  1895→    <span className={`inline-flex items-center gap-0.5 font-semibold tabular-nums px-1.5 py-0.5 rounded text-[10px] ${cls}`}>
+  1896→      <Icon className="w-2.5 h-2.5" />
+  1897→      {val}
+  1898→    </span>
+  1899→  );
+  1900→}
+  1901→
+  1902→function RsiBadge({ rsi }: { rsi: number }) {
+  1903→  const cls = rsi > 80 ? "pastel-negative" : rsi > 70 ? "pastel-warning" : rsi > 55 ? "pastel-positive" : "pastel-purple";
+  1904→  return <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold tabular-nums ${cls}`}>{rsi.toFixed(1)}</span>;
+  1905→}
+  1906→
+  1907→function StatusBadge({ status }: { status: "HOLD" | "WATCH" | "EXIT" }) {
+  1908→  const map = {
+  1909→    HOLD: "pastel-positive",
+  1910→    WATCH: "pastel-warning",
+  1911→    EXIT: "pastel-negative",
+  1912→  };
+  1913→  return <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold ${map[status]}`}>{status}</span>;
+  1914→}
+  1915→
+  1916→function MomentumScoreBadge({ score }: { score: number }) {
+  1917→  if (isNaN(score)) return <span className="text-muted-foreground">—</span>;
+  1918→  const cls = score > 75 ? "pastel-positive" : score > 60 ? "pastel-info" : score > 45 ? "bg-muted text-muted-foreground" : "pastel-warning";
+  1919→  return <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold tabular-nums ${cls}`}>{score.toFixed(0)}</span>;
+  1920→}
+  1921→
+  1922→/* ---------------------------------------------------------------- RebalancePanel */
+  1923→function RebalancePanel({ rebalance }: { rebalance: RebalanceResult }) {
+  1924→  const s = rebalance.summary;
+  1925→  const actionColors: Record<RebalanceAction, string> = {
+  1926→    "BUY MORE": "pastel-positive",
+  1927→    "HOLD": "bg-muted text-muted-foreground",
+  1928→    "TRIM 30%": "pastel-warning",
+  1929→    "TRIM 60%": "pastel-warning",
+  1930→    "EXIT": "pastel-negative",
+  1931→    "INITIATE": "pastel-info",
+  1932→  };
+  1933→
+  1934→  return (
+  1935→    <Card className="card-pastel">
+  1936→      <CardHeader>
+  1937→        <CardTitle className="flex items-center gap-2 text-base">
+  1938→          <RefreshCw className="w-4 h-4 text-primary" /> Rebalance Actions
+  1939→        </CardTitle>
+  1940→        <CardDescription>
+  1941→          Compare current holdings to fresh screen · momentum-driven buy/trim/exit decisions
+  1942→        </CardDescription>
+  1943→      </CardHeader>
+  1944→      <CardContent>
+  1945→        {/* Summary stat cards */}
+  1946→        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
+  1947→          <div className="pastel-positive rounded-md p-2 text-center">
+  1948→            <div className="text-base font-bold tabular-nums">{s.buyMore}</div>
+  1949→            <div className="text-[9px] opacity-80">Buy More</div>
+  1950→          </div>
+  1951→          <div className="bg-muted rounded-md p-2 text-center">
+  1952→            <div className="text-base font-bold tabular-nums">{s.hold}</div>
+  1953→            <div className="text-[9px] text-muted-foreground">Hold</div>
+  1954→          </div>
+  1955→          <div className="pastel-warning rounded-md p-2 text-center">
+  1956→            <div className="text-base font-bold tabular-nums">{s.trim30 + s.trim60}</div>
+  1957→            <div className="text-[9px] opacity-80">Trim</div>
+  1958→          </div>
+  1959→          <div className="pastel-negative rounded-md p-2 text-center">
+  1960→            <div className="text-base font-bold tabular-nums">{s.exit}</div>
+  1961→            <div className="text-[9px] opacity-80">Exit</div>
+  1962→          </div>
+  1963→          <div className="pastel-info rounded-md p-2 text-center">
+  1964→            <div className="text-base font-bold tabular-nums">{s.initiate}</div>
+  1965→            <div className="text-[9px] opacity-80">New</div>
+  1966→          </div>
+  1967→          <div className="rounded-md p-2 text-center border border-border/60">
+  1968→            <div className={`text-base font-bold tabular-nums ${s.netCashflow >= 0 ? "text-emerald-600" : "text-amber-600"}`}>
+  1969→              {s.netCashflow >= 0 ? "+" : "−"}{fmtINR(Math.abs(s.netCashflow))}
+  1970→            </div>
+  1971→            <div className="text-[9px] text-muted-foreground">{s.netCashflow >= 0 ? "Cash freed" : "Deploy"}</div>
+  1972→          </div>
+  1973→        </div>
+  1974→
+  1975→        {/* Action table */}
+  1976→        <div className="overflow-x-auto scroll-pastel">
+  1977→          <Table>
+  1978→            <TableHeader>
+  1979→              <TableRow>
+  1980→                <TableHead>Symbol</TableHead>
+  1981→                <TableHead className="text-center">Action</TableHead>
+  1982→                <TableHead className="text-right hidden sm:table-cell">Entry ₹</TableHead>
+  1983→                <TableHead className="text-right">Current ₹</TableHead>
+  1984→                <TableHead className="text-right hidden sm:table-cell">P&L %</TableHead>
+  1985→                <TableHead className="text-right">Mom. Δ</TableHead>
+  1986→                <TableHead className="text-right">Shares</TableHead>
+  1987→                <TableHead className="text-right">₹ Change</TableHead>
+  1988→                <TableHead className="hidden lg:table-cell">Reason</TableHead>
+  1989→              </TableRow>
+  1990→            </TableHeader>
+  1991→            <TableBody>
+  1992→              {rebalance.items.map((item) => (
+  1993→                <TableRow key={item.symbol}>
+  1994→                  <TableCell>
+  1995→                    <div className="font-semibold text-xs">{item.symbol}</div>
+  1996→                    <div className="text-[9px] text-muted-foreground line-clamp-1 max-w-[120px]">{item.longName}</div>
+  1997→                  </TableCell>
+  1998→                  <TableCell className="text-center">
+  1999→                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold ${actionColors[item.action]}`}>
+  2000→                      {item.action}
+
+[showing lines 1-2000 of 2408; use offset=2001 with limit to continue reading]

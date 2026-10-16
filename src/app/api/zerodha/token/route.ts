@@ -1,6 +1,4 @@
-// POST /api/zerodha/token
-// Manual token entry: user pastes request_token from Kite developer portal
-// Body: { request_token: "xxx" }
+// POST /api/zerodha/token — exchange request_token for access_token
 import { NextResponse } from "next/server";
 import { getAccessToken } from "@/lib/kite";
 
@@ -19,10 +17,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Token exchange failed. Check your API secret." }, { status: 500 });
     }
 
-    const response = NextResponse.json({ success: true, user: result.user_name });
+    const response = NextResponse.json({
+      success: true,
+      user: result.user_name,
+      access_token: result.access_token,
+    });
+
     response.cookies.set("kite_access_token", result.access_token, {
-      httpOnly: true,
-      secure: true,
+      httpOnly: false,
+      secure: false,
       sameSite: "lax",
       maxAge: 24 * 60 * 60,
       path: "/",

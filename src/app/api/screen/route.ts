@@ -233,8 +233,8 @@ async function tryCsvScreen(topN: number, rsiMin: number, mcapMin: number, volMi
       });
     }
 
-    // Sort by 6M return DESC, take top N
-    screened.sort((a, b) => b.ret6mPct - a.ret6mPct);
+    // Sort by composite Signal Score DESC (Phase 1)
+    screened.sort((a, b) => (b.signalScore ?? 0) - (a.signalScore ?? 0));
     const top10 = screened.slice(0, topN).map((s, i) => ({ ...s, rank: i + 1 }));
 
     return {
@@ -293,7 +293,7 @@ async function tryTypeScript(topN: number, rsiMin: number, mcapMin: number, volM
       });
     }
 
-    screened.sort((a, b) => b.ret6mPct - a.ret6mPct);
+    screened.sort((a, b) => (b.signalScore ?? 0) - (a.signalScore ?? 0));
     const top10 = screened.slice(0, topN).map((s, i) => ({ ...s, rank: i + 1 }));
 
     return {
