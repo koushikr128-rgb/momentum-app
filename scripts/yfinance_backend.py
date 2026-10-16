@@ -685,10 +685,16 @@ def cmd_bridge_screen(top_n: int = 10, filters: dict | None = None):
             0.10 * risk_score
         )
 
-        # Trailing SL: previous week's low (the Pullback Bridge 30-day emergency stop)
+        # Trailing SL: previous week's ACTUAL low (the Pullback Bridge 30-day emergency stop)
+        # If prev week low is above the entry (stock in very strong uptrend), use the tactic's stop instead
         trailing_sl = pb.get("prev_week_low")
-        # Active tactic = the one with lowest risk% among ready ones
-        active_tactic = best_tactic
+        tactic_stop = best_tactic["stop"]
+        entry_price_tactic = best_tactic["entry"]
+        # Sanity: trailing SL must be BELOW entry. If not, use tactic stop.
+        if trailing_sl is None or trailing_sl >= entry_price_tactic:
+            trailing_sl = tactic_stop
+        # Use the LOWER of (prev week low, tactic stop) as the effective trailing SL
+        effective_sl = min(trailing_sl, tactic_stop) if trailing_sl else tactic_stop
 
         candidates.append({
             "symbol": sym,
@@ -704,17 +710,17 @@ def cmd_bridge_screen(top_n: int = 10, filters: dict | None = None):
             "setupGrade": m.get("setupGrade", "C"),
             "signalScore": m.get("signalScore", 0),
             "bridgeScore": bridge_score,
-            "activeTactic": active_tactic["name"],
-            "activeTacticId": active_tactic["id"],
-            "entryPrice": active_tactic["entry"],
-            "stopPrice": active_tactic["stop"],
-            "trailingSL": trailing_sl,
-            "riskPct": risk_pct,
-            "riskRupees": active_tactic["entry"] - active_tactic["stop"],
+            "activeTactic": best_tactic["name"],
+            "activeTacticId": best_tactic["id"],
+            "entryPrice": best_tactic["entry"],
+            "stopPrice": best_tactic["stop"],
+            "trailingSL": effective_sl,
+            "prevWeekLow": pb.get("prev_week_low"),
+            "riskPct": (best_tactic["entry"] - effective_sl) / best_tactic["entry"] * 100 if best_tactic["entry"] > 0 else 0,
+            "riskRupees": best_tactic["entry"] - effective_sl,
             "daily20ema": pb.get("daily_20ema"),
             "weekly9ema": pb.get("weekly_9ema"),
             "swingLow": pb.get("swing_low"),
-            "prevWeekLow": trailing_sl,
             "anchorCandle": pb.get("anchor_candle"),
             "monthRangeLow": pb.get("month_range_low"),
             "monthRangeHigh": pb.get("month_range_high"),
@@ -967,11 +973,21 @@ def _find_swing_low(close, lookback=10):
     return float(recent.min())
 
 
-def _find_prev_week_low(weekly_close):
-    """Find the low of the previous completed week."""
-    if len(weekly_close) < 2:
+def _find_prev_week_low(df):
+    """Find the actual LOW of the previous completed week (lowest intraday price).
+    Uses the 'Low' column resampled to weekly, not just the close.
+    """
+    if df is None or "Low" not in df.columns:
         return None
-    return float(weekly_close.iloc[-2])
+    low_col = df["Low"].squeeze().dropna()
+    if len(low_col) < 5:
+        return None
+    # Resample to weekly (Friday end) and take the MIN of each week
+    weekly_low = low_col.resample("W-FRI").min().dropna()
+    if len(weekly_low) < 2:
+        return None
+    # Return the previous week's low (second-to-last entry)
+    return float(weekly_low.iloc[-2])
 
 
 def _compute_pullback_bridge(df):
@@ -1058,7 +1074,7 @@ def _compute_pullback_bridge(df):
         swing_low = _find_swing_low(close, lookback=10)
 
         # --- Previous Week Low ---
-        prev_week_low = _find_prev_week_low(weekly_close)
+        prev_week_low = _find_prev_week_low(df)
 
         # --- Build 3 entry tactics ---
         current_price = float(close.iloc[-1])
