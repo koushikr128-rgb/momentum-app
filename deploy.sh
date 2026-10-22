@@ -40,7 +40,16 @@ apt-get update -qq
 apt-get install -y -qq \
     curl git build-essential \
     nginx certbot python3-certbot-nginx \
-    python3 python3-pip python3-venv
+    python3 python3-pip python3-venv \
+    libssl-dev libffi-dev libcurl4-openssl-dev
+
+# Detect architecture (ARM64 vs x86)
+ARCH=$(uname -m)
+echo "→ Detected architecture: $ARCH"
+if [ "$ARCH" = "aarch64" ]; then
+    echo "→ ARM64 detected — installing additional build tools for curl_cffi"
+    apt-get install -y -qq gcc-aarch64-linux-gnu
+fi
 
 # --- Step 3: Install Node.js 20 ---
 if ! command -v node &>/dev/null || [[ "$(node -v)" != v$NODE_VERSION* ]]; then
@@ -84,7 +93,9 @@ sudo -u $APP_USER /home/$APP_USER/venv/bin/pip install --upgrade pip
 sudo -u $APP_USER /home/$APP_USER/venv/bin/pip install -r requirements.txt
 
 # Make yfinance available system-wide too (for Next.js exec() calls)
-pip3 install yfinance curl_cffi multitasking peewee protobuf pandas numpy
+# On ARM64, curl_cffi might need compilation — fall back to yfinance without it if needed
+pip3 install yfinance multitasking peewee protobuf pandas numpy || echo "yfinance install warning"
+pip3 install curl_cffi || echo "curl_cffi not available — yfinance will use default fetcher (more rate-limited but works)"
 
 # --- Step 8: Install Node dependencies + build ---
 echo "→ Installing Node dependencies..."
