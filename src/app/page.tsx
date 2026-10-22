@@ -496,6 +496,48 @@ export default function Home() {
   useEffect(() => { try { localStorage.setItem("nifty_held_stocks", JSON.stringify(heldStocks)); } catch {} }, [heldStocks]);
   useEffect(() => { try { localStorage.setItem("nifty_change_history", JSON.stringify(changeHistory.slice(-20))); } catch {} }, [changeHistory]);
 
+  // ===== Screen History — snapshot full top 30 on every Run Screen =====
+  type ScreenSnapshot = {
+    date: string; mode: "momentum" | "bridge"; topN: number;
+    stocks: Array<{ symbol: string; rank: number; signalScore: number; currentPrice: number; setupType: string; setupGrade: string; ret6mPct: number; ret1wPct: number; }>;
+  };
+  const [screenHistory, setScreenHistory] = useState<ScreenSnapshot[]>([]);
+  const [historySearchSymbol, setHistorySearchSymbol] = useState<string>("");
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("nifty_screen_history");
+      if (stored) {
+        const parsed = JSON.parse(stored) as ScreenSnapshot[];
+        if (Array.isArray(parsed)) {
+          const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+          setScreenHistory(parsed.filter(s => new Date(s.date).getTime() > cutoff));
+        }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("nifty_screen_history", JSON.stringify(screenHistory.slice(-200))); } catch {}
+  }, [screenHistory]);
+
+  useEffect(() => {
+    if (screen?.top10?.length > 0 && screen.runAt) {
+      const snapshot: ScreenSnapshot = {
+        date: screen.runAt, mode: screenMode, topN: screen.top10.length,
+        stocks: screen.top10.map((s: any) => ({
+          symbol: s.symbol, rank: s.rank, signalScore: s.signalScore ?? 0,
+          currentPrice: s.currentPrice, setupType: s.setupType ?? "UPTREND",
+          setupGrade: s.setupGrade ?? "C", ret6mPct: s.ret6mPct ?? 0, ret1wPct: s.ret1wPct ?? 0,
+        })),
+      };
+      setScreenHistory(prev => {
+        if (prev.length > 0 && prev[prev.length - 1].date === snapshot.date) return prev;
+        return [...prev, snapshot].slice(-200);
+      });
+    }
+  }, [screen?.runAt, screenMode]);
+
   const runAllocation = useCallback(async (silent = false, modeOverride?: "risk-parity" | "momentum") => {
     if (!screen) return;
     try {
@@ -1101,7 +1143,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full mt-3">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -2201,7 +2243,7 @@ function BridgeTradePlanCard({ stocks, regime }: { stocks: any[]; regime: Regime
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge" }) {
+function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void }) {
   if (running && (!screen || elapsedMs > 1000)) {
     const elapsed = elapsedMs ? (elapsedMs / 1000).toFixed(1) : "0.0";
     const isBridge = screenMode === "bridge";
@@ -2566,7 +2608,173 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
           )}
         </CardContent>
       </Card>
+
+      {/* Position History — search a symbol to see its rank over time */}
+      <ScreenHistoryCard
+        history={screenHistory || []}
+        searchSymbol={historySearchSymbol || ""}
+        setSearchSymbol={setHistorySearchSymbol || (() => {})}
+        currentScreenSymbols={screen?.top10?.map((s: any) => s.symbol) || []}
+      />
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------- ScreenHistoryCard */
+function ScreenHistoryCard({ history, searchSymbol, setSearchSymbol, currentScreenSymbols }: {
+  history: any[];
+  searchSymbol: string;
+  setSearchSymbol: (v: string) => void;
+  currentScreenSymbols: string[];
+}) {
+  const sym = searchSymbol.trim().toUpperCase();
+  const hasHistory = history.length > 0;
+
+  const symbolHistory = sym ? history.map(snap => {
+    const stock = snap.stocks.find((s: any) => s.symbol === sym);
+    return {
+      date: snap.date, mode: snap.mode,
+      rank: stock?.rank ?? null, signalScore: stock?.signalScore ?? null,
+      price: stock?.currentPrice ?? null, setupType: stock?.setupType ?? null,
+      setupGrade: stock?.setupGrade ?? null, ret6mPct: stock?.ret6mPct ?? null,
+      ret1wPct: stock?.ret1wPct ?? null, inList: !!stock,
+    };
+  }).reverse() : [];
+
+  const chartData = sym ? symbolHistory.slice().reverse().map(s => ({
+    date: fmtISTDate(s.date), rank: s.rank ?? 0, signal: s.signalScore ?? 0, price: s.price ?? 0,
+  })) : [];
+
+  const inListCount = symbolHistory.filter(s => s.inList).length;
+  const bestRank = symbolHistory.filter(s => s.inList).reduce((min, s) => s.rank < min ? s.rank : min, 999);
+  const avgRank = inListCount > 0 ? (symbolHistory.filter(s => s.inList).reduce((sum, s) => sum + s.rank, 0) / inListCount) : 0;
+  const currentlyInList = currentScreenSymbols.includes(sym);
+
+  return (
+    <Card className="card-pastel">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <History className="w-4 h-4 text-primary" />
+          Position History
+          <span className="text-[10px] font-normal text-muted-foreground ml-auto">
+            {hasHistory ? `${history.length} snapshots saved` : "No history yet"}
+          </span>
+        </CardTitle>
+        <CardDescription className="text-[10px]">
+          Type a symbol to see its rank across all past screen runs (auto-saved each time you click Run Screen)
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-0 space-y-3">
+        <div className="flex gap-2">
+          <Input
+            type="text"
+            placeholder="e.g. RELIANCE, TCS, PERSISTENT..."
+            value={searchSymbol}
+            onChange={(e) => setSearchSymbol(e.target.value.toUpperCase())}
+            className="flex-1 uppercase"
+          />
+        </div>
+
+        {currentScreenSymbols.length > 0 && !sym && (
+          <div className="flex flex-wrap gap-1.5">
+            <span className="text-[10px] text-muted-foreground self-center mr-1">Current list:</span>
+            {currentScreenSymbols.slice(0, 10).map((s) => (
+              <button key={s} onClick={() => setSearchSymbol(s)}
+                className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-muted hover:bg-primary/10 hover:text-primary transition-colors">
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {!hasHistory && (
+          <div className="text-xs text-muted-foreground p-3 rounded-lg border border-dashed border-border/60 text-center">
+            No screen history yet. Run the screen — each run is automatically saved. After that, search any symbol to see how its rank changed over time.
+          </div>
+        )}
+
+        {hasHistory && sym && inListCount === 0 && (
+          <div className="text-xs text-amber-700 p-3 rounded-lg border border-amber-200 bg-amber-50/50">
+            <b>{sym}</b> has not appeared in any of your {history.length} saved screen runs.
+            <br />
+            <span className="text-[10px]">It never made it into the top {history[0]?.topN || 30} by Signal Score during any run.</span>
+          </div>
+        )}
+
+        {hasHistory && sym && inListCount > 0 && (
+          <>
+            <div className="grid grid-cols-4 gap-2">
+              <div className="rounded-lg border border-border/60 bg-card/60 p-2 text-center">
+                <div className="text-[10px] text-muted-foreground">Appearances</div>
+                <div className="text-sm font-bold tabular-nums">{inListCount} / {symbolHistory.length}</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-card/60 p-2 text-center">
+                <div className="text-[10px] text-muted-foreground">Best Rank</div>
+                <div className="text-sm font-bold tabular-nums text-emerald-600">#{bestRank}</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-card/60 p-2 text-center">
+                <div className="text-[10px] text-muted-foreground">Avg Rank</div>
+                <div className="text-sm font-bold tabular-nums">#{avgRank.toFixed(1)}</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-card/60 p-2 text-center">
+                <div className="text-[10px] text-muted-foreground">Now</div>
+                <div className={`text-sm font-bold tabular-nums ${currentlyInList ? "text-emerald-600" : "text-red-600"}`}>
+                  {currentlyInList ? "In list" : "Out"}
+                </div>
+              </div>
+            </div>
+
+            {chartData.length > 1 && (
+              <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+                <div className="text-[10px] font-semibold text-muted-foreground mb-2">Rank Timeline (lower = better)</div>
+                <ResponsiveContainer width="100%" height={150}>
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                    <XAxis dataKey="date" tick={{ fontSize: 9 }} stroke="hsl(var(--muted-foreground))" />
+                    <YAxis reversed domain={[1, 'dataMax + 1']} tick={{ fontSize: 9 }} stroke="hsl(var(--muted-foreground))" />
+                    <Tooltip contentStyle={{ fontSize: 10, padding: 6 }} formatter={(v: any, n: string) => n === "rank" ? [`#${v}`, "Rank"] : [v, n]} />
+                    <Line type="monotone" dataKey="rank" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-[10px]">Date</TableHead>
+                    <TableHead className="text-[10px]">Mode</TableHead>
+                    <TableHead className="text-[10px] text-right">Rank</TableHead>
+                    <TableHead className="text-[10px] text-right">Signal</TableHead>
+                    <TableHead className="text-[10px] text-right">Price</TableHead>
+                    <TableHead className="text-[10px]">Setup</TableHead>
+                    <TableHead className="text-[10px] text-right">1W %</TableHead>
+                    <TableHead className="text-[10px] text-right">6M %</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {symbolHistory.slice(0, 20).map((s, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-[10px] tabular-nums">{fmtISTDate(s.date)} <span className="text-muted-foreground">{fmtISTTime(s.date)}</span></TableCell>
+                      <TableCell className="text-[10px]">{s.mode}</TableCell>
+                      <TableCell className="text-[10px] text-right tabular-nums font-bold">
+                        {s.inList ? `#${s.rank}` : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell className="text-[10px] text-right tabular-nums">{s.signalScore ?? "—"}</TableCell>
+                      <TableCell className="text-[10px] text-right tabular-nums">{s.price ? `₹${fmt(s.price)}` : "—"}</TableCell>
+                      <TableCell className="text-[10px]">{s.setupType ?? "—"}</TableCell>
+                      <TableCell className="text-[10px] text-right tabular-nums">{s.ret1wPct != null ? <ReturnCell pct={s.ret1wPct} /> : "—"}</TableCell>
+                      <TableCell className="text-[10px] text-right tabular-nums">{s.ret6mPct != null ? <ReturnCell pct={s.ret6mPct} /> : "—"}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
