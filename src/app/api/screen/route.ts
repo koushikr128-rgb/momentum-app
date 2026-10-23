@@ -53,8 +53,18 @@ export async function GET(req: Request) {
     });
   }
 
-  // 1.5. Try published screen data (from GitHub — published by sandbox)
-  if (RENDER_URL || !IS_SANDBOX) {
+  // 1.5. On sandbox: try local Python FIRST (fresh data from 750 stocks)
+  if (IS_SANDBOX) {
+    const localPyResult = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
+    if (localPyResult) {
+      cache.set(cacheKey, { data: localPyResult, ts: Date.now() });
+      lastSuccessful = { data: localPyResult, ts: Date.now() };
+      return NextResponse.json(localPyResult);
+    }
+  }
+
+  // 2. Try published screen data (from GitHub — fallback when yfinance missing on sandbox, primary on Vercel)
+  {
     const publishedResult = await tryPublishedScreen(topN, start);
     if (publishedResult) {
       cache.set(cacheKey, { data: publishedResult, ts: Date.now() });
@@ -63,23 +73,13 @@ export async function GET(req: Request) {
     }
   }
 
-  // 2. Try Render Python backend (when deployed on Vercel with RENDER_URL)
+  // 3. Try Render Python backend (when deployed on Vercel with RENDER_URL)
   if (RENDER_URL) {
     const renderResult = await tryRenderBackend(topN, rsiMin, mcapMin, volMin, start);
     if (renderResult) {
       cache.set(cacheKey, { data: renderResult, ts: Date.now() });
       lastSuccessful = { data: renderResult, ts: Date.now() };
       return NextResponse.json(renderResult);
-    }
-  }
-
-  // 3. Try local Python (sandbox only — uses CSV for market cap + yfinance for OHLCV)
-  if (IS_SANDBOX) {
-    const localPyResult = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
-    if (localPyResult) {
-      cache.set(cacheKey, { data: localPyResult, ts: Date.now() });
-      lastSuccessful = { data: localPyResult, ts: Date.now() };
-      return NextResponse.json(localPyResult);
     }
   }
 
@@ -207,19 +207,20 @@ async function tryRenderBackend(topN: number, rsiMin: number, mcapMin: number, v
 
 async function tryLocalPython(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
   try {
-    // Auto-install yfinance if missing (sandbox venv resets between sessions)
+    // Check if yfinance is installed
     const { stdout: checkOut } = await execFileAsync(
-      PYTHON, ["-c", "import yfinance"],
+      PYTHON, ["-c", "import yfinance; print('OK')"],
       { timeout: 10_000 }
     ).catch(() => ({ stdout: "", stderr: "import failed" }));
 
-    if (!checkOut && checkOut !== undefined) {
-      // yfinance import failed — install it
-      console.log("[screen] yfinance missing, auto-installing...");
-      await execFileAsync(
-        PYTHON, ["-m", "pip", "install", "yfinance", "pandas", "numpy", "--quiet"],
+    if (!checkOut.includes("OK")) {
+      // yfinance not installed — install in background, return null (will fall through to published data)
+      console.log("[screen] yfinance missing — installing in background...");
+      execFileAsync(
+        PYTHON, ["-m", "pip", "install", "yfinance", "curl_cffi", "pandas", "numpy", "--quiet"],
         { timeout: 120_000 }
-      );
+      ).then(() => console.log("[screen] yfinance installed in background")).catch(() => {});
+      return null; // Fall through to published data or CSV fallback
     }
 
     const filtersJson = JSON.stringify({ rsi_min: rsiMin, mcap_min_cr: mcapMin, vol_min: volMin });
