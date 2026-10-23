@@ -501,6 +501,33 @@ export default function Home() {
     } catch {}
   }, []);
   useEffect(() => { if (screen?.top10?.length > 0) try { localStorage.setItem("nifty_last_screen", JSON.stringify(screen)); } catch {} }, [screen]);
+
+  // ===== Publish screen results to GitHub (for Vercel live app) =====
+  const [publishing, setPublishing] = useState(false);
+  const [lastPublished, setLastPublished] = useState<string | null>(null);
+
+  const publishToLive = useCallback(async () => {
+    if (!screen || screen.top10.length === 0) {
+      toast({ title: "No screen to publish", description: "Run the screen first" });
+      return;
+    }
+    setPublishing(true);
+    try {
+      const res = await fetch("/api/publish-screen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(screen),
+      });
+      if (!res.ok) throw new Error("Publish failed");
+      const data = await res.json();
+      setLastPublished(new Date().toISOString());
+      toast({ title: "✅ Published to Live!", description: `${screen.top10.length} stocks pushed to Vercel. Live app will update in ~2 min.` });
+    } catch (e: any) {
+      toast({ title: "Publish failed", description: e.message, variant: "destructive" });
+    } finally {
+      setPublishing(false);
+    }
+  }, [screen]);
   useEffect(() => { try { localStorage.setItem("nifty_held_stocks", JSON.stringify(heldStocks)); } catch {} }, [heldStocks]);
   useEffect(() => { try { localStorage.setItem("nifty_change_history", JSON.stringify(changeHistory.slice(-20))); } catch {} }, [changeHistory]);
 
@@ -986,6 +1013,13 @@ export default function Home() {
               <RefreshCw className={`w-3 h-3 sm:mr-1 ${running === "screen" ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">{running === "screen" ? "Running…" : screenMode === "bridge" ? "Run Bridge" : "Run Screen"}</span>
             </Button>
+            {/* Publish to Live — pushes screen results to GitHub for Vercel */}
+            {screen && screen.top10.length > 0 && (
+              <Button onClick={publishToLive} disabled={publishing} size="sm" variant="outline" className="h-7 px-2.5 text-[11px] border-emerald-300 text-emerald-700 hover:bg-emerald-50" title="Publish current screen results to the live Vercel app">
+                {publishing ? <RefreshCw className="w-3 h-3 sm:mr-1 animate-spin" /> : <TrendingUp className="w-3 h-3 sm:mr-1" />}
+                <span className="hidden sm:inline">{publishing ? "Publishing…" : "Publish to Live"}</span>
+              </Button>
+            )}
             {/* Top N selector — pick portfolio size (5/10/15/20/25/30 stocks) */}
             <div className="flex items-center gap-1">
               <Label htmlFor="topn-select" className="text-[10px] text-muted-foreground hidden sm:inline">Top</Label>

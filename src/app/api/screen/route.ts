@@ -53,6 +53,16 @@ export async function GET(req: Request) {
     });
   }
 
+  // 1.5. Try published screen data (from GitHub — published by sandbox)
+  if (RENDER_URL || !IS_SANDBOX) {
+    const publishedResult = await tryPublishedScreen(topN, start);
+    if (publishedResult) {
+      cache.set(cacheKey, { data: publishedResult, ts: Date.now() });
+      lastSuccessful = { data: publishedResult, ts: Date.now() };
+      return NextResponse.json(publishedResult);
+    }
+  }
+
   // 2. Try Render Python backend (when deployed on Vercel with RENDER_URL)
   if (RENDER_URL) {
     const renderResult = await tryRenderBackend(topN, rsiMin, mcapMin, volMin, start);
@@ -121,6 +131,53 @@ export async function GET(req: Request) {
     elapsedMs: Date.now() - start, cached: false,
     topN, filters: { rsiMin, mcapMin, volMin },
   });
+}
+
+// Try reading published screen data from GitHub (published by sandbox)
+async function tryPublishedScreen(topN: number, start: number) {
+  try {
+    // Read from local file first (if it exists — baked into Vercel deployment)
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const filePath = path.join(process.cwd(), "data", "latest_screen.json");
+    const fileContent = await fs.readFile(filePath, "utf-8").catch(() => null);
+
+    if (!fileContent) {
+      // Fallback: fetch from GitHub raw URL
+      const githubRes = await fetch(
+        "https://raw.githubusercontent.com/koushikr128-rgb/momentum-app/main/data/latest_screen.json",
+        { cache: "no-store", signal: AbortSignal.timeout(5000) }
+      );
+      if (!githubRes.ok) return null;
+      const data = await githubRes.json();
+      if (!data || !data.top10 || data.top10.length === 0) return null;
+      return {
+        ...data,
+        elapsedMs: Date.now() - start,
+        cached: true,
+        backend: "published",
+        topN,
+        filters: { rsiMin: 0, mcapMin: 0, volMin: 0 },
+      };
+    }
+
+    const data = JSON.parse(fileContent);
+    if (!data || !data.top10 || data.top10.length === 0) return null;
+
+    // Slice to requested topN
+    const sliced = {
+      ...data,
+      top10: data.top10.slice(0, topN).map((s: any, i: number) => ({ ...s, rank: i + 1 })),
+      elapsedMs: Date.now() - start,
+      cached: true,
+      backend: "published",
+      topN,
+      publishedAt: data.publishedAt,
+    };
+    return sliced;
+  } catch {
+    return null;
+  }
 }
 
 async function tryRenderBackend(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
