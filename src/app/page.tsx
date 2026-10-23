@@ -47,6 +47,14 @@ type ScreenChange = {
   removed: string[];     // just symbols (we don't have full data for removed stocks)
 };
 
+type HeldStock = {
+  symbol: string;
+  entryPrice?: number;
+  shares?: number;
+  rupees?: number;
+  sector?: string;
+};
+
 type RemovedStock = {
   symbol: string;
   sector: string;

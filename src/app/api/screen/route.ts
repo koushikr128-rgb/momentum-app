@@ -10,7 +10,7 @@ import { promisify } from "util";
 import { dedupUniverse } from "@/lib/universe";
 import { batchFetchDailyCandles } from "@/lib/yahoo";
 import { fetchBatchQuotes } from "@/lib/yahoo-batch";
-import { computeMetrics, ScreenedStock } from "@/lib/indicators";
+import { computeMetrics, ScreenedStock, StockMetrics } from "@/lib/indicators";
 import { applyTechnicalFilter } from "@/lib/strategy";
 import { getNifty750Symbols, getNifty750Map } from "@/lib/nifty750";
 
@@ -206,7 +206,7 @@ async function tryCsvScreen(topN: number, rsiMin: number, mcapMin: number, volMi
     if (dataMap.size === 0) return null; // Yahoo rate-limited
 
     // Compute indicators for each stock
-    const metricsList = [];
+    const metricsList: StockMetrics[] = [];
     for (const sym of csvSymbols) {
       const data = dataMap.get(sym);
       if (!data) continue;
@@ -215,7 +215,7 @@ async function tryCsvScreen(topN: number, rsiMin: number, mcapMin: number, volMi
     }
 
     // Apply technical + volume filter
-    const techPassed = metricsList.filter((m) =>
+    const techPassed = metricsList.filter((m: StockMetrics) =>
       applyTechnicalFilter(m) && m.rsi14 > rsiMin && m.avgVolume30d > volMin
     );
     if (techPassed.length === 0) return null;
@@ -264,7 +264,7 @@ async function tryTypeScript(topN: number, rsiMin: number, mcapMin: number, volM
     const dataMap = await batchFetchDailyCandles(universe, "1y", 3);
     if (dataMap.size === 0) return null;
 
-    const metricsList = [];
+    const metricsList: StockMetrics[] = [];
     for (const sym of universe) {
       const data = dataMap.get(sym);
       if (!data) continue;
@@ -272,12 +272,12 @@ async function tryTypeScript(topN: number, rsiMin: number, mcapMin: number, volM
       if (m) metricsList.push(m);
     }
 
-    const techPassed = metricsList.filter((m) =>
+    const techPassed = metricsList.filter((m: StockMetrics) =>
       applyTechnicalFilter(m) && m.rsi14 > rsiMin && m.avgVolume30d > volMin
     );
     if (techPassed.length === 0) return null;
 
-    const techSymbols = techPassed.map((m) => m.symbol);
+    const techSymbols = techPassed.map((m: StockMetrics) => m.symbol);
     const quoteMap = await fetchBatchQuotes(techSymbols);
 
     const screened: ScreenedStock[] = [];
