@@ -1,7 +1,7 @@
 // GET /api/screen
-// Hybrid: tries CSV-backed TypeScript first (fastest — no Yahoo .info calls),
-// falls back to Vercel Python serverless function (when deployed on Vercel),
+// Hybrid: tries Render Python backend (when RENDER_URL is set),
 // falls back to local Python execFile (in sandbox),
+// falls back to CSV-backed TypeScript,
 // falls back to cache.
 
 import { NextResponse } from "next/server";
@@ -17,15 +17,14 @@ import { getNifty750Symbols, getNifty750Map } from "@/lib/nifty750";
 const execFileAsync = promisify(execFile);
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 const PYTHON = "/home/z/.venv/bin/python3";
 const SCRIPT = "/home/z/my-project/scripts/yfinance_backend.py";
 
-// Detect if we're on Vercel (then Python functions are available at /api/screen.py)
-const IS_VERCEL = process.env.VERCEL === "1" || !!process.env.VERCEL_URL;
-// The Python serverless URL — on Vercel it's the same domain
-const PYTHON_API_URL = IS_VERCEL ? "/api/screen.py" : null;
+// Render Python backend URL (set as env var on Vercel)
+const RENDER_URL = process.env.RENDER_URL || "";
+const IS_SANDBOX = !RENDER_URL && process.env.VERCEL !== "1";
 
 type CacheEntry = { data: unknown; ts: number };
 const cache = new Map<string, CacheEntry>();
@@ -54,21 +53,23 @@ export async function GET(req: Request) {
     });
   }
 
-  // 2. Try local Python first (uses CSV for market cap + yfinance for OHLCV — most reliable)
-  const localPyResult = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
-  if (localPyResult) {
-    cache.set(cacheKey, { data: localPyResult, ts: Date.now() });
-    lastSuccessful = { data: localPyResult, ts: Date.now() };
-    return NextResponse.json(localPyResult);
+  // 2. Try Render Python backend (when deployed on Vercel with RENDER_URL)
+  if (RENDER_URL) {
+    const renderResult = await tryRenderBackend(topN, rsiMin, mcapMin, volMin, start);
+    if (renderResult) {
+      cache.set(cacheKey, { data: renderResult, ts: Date.now() });
+      lastSuccessful = { data: renderResult, ts: Date.now() };
+      return NextResponse.json(renderResult);
+    }
   }
 
-  // 3. Try Vercel Python serverless function (works when deployed on Vercel)
-  if (PYTHON_API_URL) {
-    const pyResult = await tryVercelPython(topN, rsiMin, mcapMin, volMin, start);
-    if (pyResult) {
-      cache.set(cacheKey, { data: pyResult, ts: Date.now() });
-      lastSuccessful = { data: pyResult, ts: Date.now() };
-      return NextResponse.json(pyResult);
+  // 3. Try local Python (sandbox only — uses CSV for market cap + yfinance for OHLCV)
+  if (IS_SANDBOX) {
+    const localPyResult = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
+    if (localPyResult) {
+      cache.set(cacheKey, { data: localPyResult, ts: Date.now() });
+      lastSuccessful = { data: localPyResult, ts: Date.now() };
+      return NextResponse.json(localPyResult);
     }
   }
 
@@ -122,13 +123,15 @@ export async function GET(req: Request) {
   });
 }
 
-async function tryVercelPython(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
+async function tryRenderBackend(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
   try {
-    const params = new URLSearchParams({
-      topN: String(topN), rsiMin: String(rsiMin),
-      mcapMin: String(mcapMin), volMin: String(volMin),
+    const res = await fetch(`${RENDER_URL}/screen`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topN, filters: { rsi_min: rsiMin, mcap_min_cr: mcapMin, vol_min: volMin } }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(55000),
     });
-    const res = await fetch(`${PYTHON_API_URL}?${params}`, { cache: "no-store" });
     if (!res.ok) return null;
     const data = await res.json();
     if (data.error || !data.top10 || data.top10.length === 0) return null;
@@ -138,7 +141,7 @@ async function tryVercelPython(topN: number, rsiMin: number, mcapMin: number, vo
       cached: false,
       topN,
       filters: { rsiMin, mcapMin, volMin },
-      backend: "vercel-python",
+      backend: "render",
     };
   } catch {
     return null;

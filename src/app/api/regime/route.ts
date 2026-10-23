@@ -18,10 +18,40 @@ import path from "path";
 
 const execAsync = promisify(exec);
 
+const RENDER_URL = process.env.RENDER_URL || "";
+const IS_SANDBOX = !RENDER_URL && process.env.VERCEL !== "1";
+
 async function fetchNiftyViaPython(): Promise<{
   candles: Candle[];
   breadth: { advancing: number; total: number };
 } | null> {
+  // 1. Try Render backend (Vercel deployment)
+  if (RENDER_URL) {
+    try {
+      const res = await fetch(`${RENDER_URL}/nifty`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(25000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.nifty_candles && data.nifty_candles.length >= 220) {
+          return {
+            candles: data.nifty_candles as Candle[],
+            breadth: {
+              advancing: data.breadth?.advancing || 0,
+              total: data.breadth?.total || 0,
+            },
+          };
+        }
+      }
+    } catch (e: any) {
+      console.error("[regime] Render fetch failed:", e.message);
+    }
+    return null;
+  }
+
+  // 2. Local Python (sandbox only)
+  if (!IS_SANDBOX) return null;
   try {
     const scriptPath = path.join(process.cwd(), "scripts", "yfinance_backend.py");
     const { stdout, stderr } = await execAsync(`python3 ${scriptPath} nifty`, {

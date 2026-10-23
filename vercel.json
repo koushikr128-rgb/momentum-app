@@ -1,13 +1,9 @@
 {
   "functions": {
-    "api/screen.py": {
-      "runtime": "@vercel/python@5.x",
-      "maxDuration": 120
-    },
-    "api/stops.py": {
-      "runtime": "@vercel/python@5.x",
+    "src/app/api/*/route.ts": {
       "maxDuration": 60
     }
   },
-  "crons": []
+  "buildCommand": "next build",
+  "framework": "nextjs"
 }
