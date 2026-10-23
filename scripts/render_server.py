@@ -1,6 +1,7 @@
 """
 Flask wrapper for the yfinance backend — runs as a persistent HTTP service
-on Render.com. Next.js API routes (on Vercel) call this via HTTP.
+alongside Next.js on the VPS. Next.js API routes call this via HTTP instead
+of exec(), which is faster and more reliable.
 
 Endpoints:
   GET  /health          → "ok"
@@ -10,7 +11,7 @@ Endpoints:
   GET  /nifty           → NIFTY 50 + breadth data for regime detector
 
 Run:
-  gunicorn -w 2 -b 0.0.0.0:$PORT render_server:app
+  gunicorn -w 2 -b 127.0.0.1:5001 render_server:app
 """
 
 import sys
@@ -91,5 +92,4 @@ def nifty():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5001))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="127.0.0.1", port=5001, debug=False)
