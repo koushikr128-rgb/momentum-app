@@ -38,7 +38,7 @@ def _run_python(cmd: str, args: list = None) -> dict:
             full_cmd,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=280,  # 280s — under gunicorn's 300s timeout
             cwd=SCRIPT_DIR,
         )
         if result.returncode != 0:
