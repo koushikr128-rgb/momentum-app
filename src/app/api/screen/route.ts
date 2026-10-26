@@ -1,7 +1,7 @@
 // GET /api/screen
-// Hybrid: tries CSV-backed TypeScript first (fastest — no Yahoo .info calls),
-// falls back to Vercel Python serverless function (when deployed on Vercel),
+// Hybrid: tries Render Python backend (when RENDER_URL is set),
 // falls back to local Python execFile (in sandbox),
+// falls back to CSV-backed TypeScript,
 // falls back to cache.
 
 import { NextResponse } from "next/server";
@@ -10,22 +10,21 @@ import { promisify } from "util";
 import { dedupUniverse } from "@/lib/universe";
 import { batchFetchDailyCandles } from "@/lib/yahoo";
 import { fetchBatchQuotes } from "@/lib/yahoo-batch";
-import { computeMetrics, ScreenedStock } from "@/lib/indicators";
+import { computeMetrics, ScreenedStock, StockMetrics } from "@/lib/indicators";
 import { applyTechnicalFilter } from "@/lib/strategy";
 import { getNifty750Symbols, getNifty750Map } from "@/lib/nifty750";
 
 const execFileAsync = promisify(execFile);
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 const PYTHON = "/home/z/.venv/bin/python3";
 const SCRIPT = "/home/z/my-project/scripts/yfinance_backend.py";
 
-// Detect if we're on Vercel (then Python functions are available at /api/screen.py)
-const IS_VERCEL = process.env.VERCEL === "1" || !!process.env.VERCEL_URL;
-// The Python serverless URL — on Vercel it's the same domain
-const PYTHON_API_URL = IS_VERCEL ? "/api/screen.py" : null;
+// Render Python backend URL (set as env var on Vercel)
+const RENDER_URL = process.env.RENDER_URL || "";
+const IS_SANDBOX = !RENDER_URL && process.env.VERCEL !== "1";
 
 type CacheEntry = { data: unknown; ts: number };
 const cache = new Map<string, CacheEntry>();
@@ -54,21 +53,33 @@ export async function GET(req: Request) {
     });
   }
 
-  // 2. Try local Python first (uses CSV for market cap + yfinance for OHLCV — most reliable)
-  const localPyResult = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
-  if (localPyResult) {
-    cache.set(cacheKey, { data: localPyResult, ts: Date.now() });
-    lastSuccessful = { data: localPyResult, ts: Date.now() };
-    return NextResponse.json(localPyResult);
+  // 1.5. On sandbox: try local Python FIRST (fresh data from 750 stocks)
+  if (IS_SANDBOX) {
+    const localPyResult = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
+    if (localPyResult) {
+      cache.set(cacheKey, { data: localPyResult, ts: Date.now() });
+      lastSuccessful = { data: localPyResult, ts: Date.now() };
+      return NextResponse.json(localPyResult);
+    }
   }
 
-  // 3. Try Vercel Python serverless function (works when deployed on Vercel)
-  if (PYTHON_API_URL) {
-    const pyResult = await tryVercelPython(topN, rsiMin, mcapMin, volMin, start);
-    if (pyResult) {
-      cache.set(cacheKey, { data: pyResult, ts: Date.now() });
-      lastSuccessful = { data: pyResult, ts: Date.now() };
-      return NextResponse.json(pyResult);
+  // 2. Try published screen data (from GitHub — fallback when yfinance missing on sandbox, primary on Vercel)
+  {
+    const publishedResult = await tryPublishedScreen(topN, start);
+    if (publishedResult) {
+      cache.set(cacheKey, { data: publishedResult, ts: Date.now() });
+      lastSuccessful = { data: publishedResult, ts: Date.now() };
+      return NextResponse.json(publishedResult);
+    }
+  }
+
+  // 3. Try Render Python backend (when deployed on Vercel with RENDER_URL)
+  if (RENDER_URL) {
+    const renderResult = await tryRenderBackend(topN, rsiMin, mcapMin, volMin, start);
+    if (renderResult) {
+      cache.set(cacheKey, { data: renderResult, ts: Date.now() });
+      lastSuccessful = { data: renderResult, ts: Date.now() };
+      return NextResponse.json(renderResult);
     }
   }
 
@@ -122,13 +133,62 @@ export async function GET(req: Request) {
   });
 }
 
-async function tryVercelPython(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
+// Try reading published screen data from GitHub (published by sandbox)
+async function tryPublishedScreen(topN: number, start: number) {
   try {
-    const params = new URLSearchParams({
-      topN: String(topN), rsiMin: String(rsiMin),
-      mcapMin: String(mcapMin), volMin: String(volMin),
+    // Read from local file first (if it exists — baked into Vercel deployment)
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const filePath = path.join(process.cwd(), "data", "latest_screen.json");
+    const fileContent = await fs.readFile(filePath, "utf-8").catch(() => null);
+
+    if (!fileContent) {
+      // Fallback: fetch from GitHub raw URL
+      const githubRes = await fetch(
+        "https://raw.githubusercontent.com/koushikr128-rgb/momentum-app/main/data/latest_screen.json",
+        { cache: "no-store", signal: AbortSignal.timeout(5000) }
+      );
+      if (!githubRes.ok) return null;
+      const data = await githubRes.json();
+      if (!data || !data.top10 || data.top10.length === 0) return null;
+      return {
+        ...data,
+        elapsedMs: Date.now() - start,
+        cached: true,
+        backend: "published",
+        topN,
+        filters: { rsiMin: 0, mcapMin: 0, volMin: 0 },
+      };
+    }
+
+    const data = JSON.parse(fileContent);
+    if (!data || !data.top10 || data.top10.length === 0) return null;
+
+    // Slice to requested topN
+    const sliced = {
+      ...data,
+      top10: data.top10.slice(0, topN).map((s: any, i: number) => ({ ...s, rank: i + 1 })),
+      elapsedMs: Date.now() - start,
+      cached: true,
+      backend: "published",
+      topN,
+      publishedAt: data.publishedAt,
+    };
+    return sliced;
+  } catch {
+    return null;
+  }
+}
+
+async function tryRenderBackend(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
+  try {
+    const res = await fetch(`${RENDER_URL}/screen`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topN, filters: { rsi_min: rsiMin, mcap_min_cr: mcapMin, vol_min: volMin } }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(55000),
     });
-    const res = await fetch(`${PYTHON_API_URL}?${params}`, { cache: "no-store" });
     if (!res.ok) return null;
     const data = await res.json();
     if (data.error || !data.top10 || data.top10.length === 0) return null;
@@ -138,7 +198,7 @@ async function tryVercelPython(topN: number, rsiMin: number, mcapMin: number, vo
       cached: false,
       topN,
       filters: { rsiMin, mcapMin, volMin },
-      backend: "vercel-python",
+      backend: "render",
     };
   } catch {
     return null;
@@ -147,19 +207,20 @@ async function tryVercelPython(topN: number, rsiMin: number, mcapMin: number, vo
 
 async function tryLocalPython(topN: number, rsiMin: number, mcapMin: number, volMin: number, start: number) {
   try {
-    // Auto-install yfinance if missing (sandbox venv resets between sessions)
+    // Check if yfinance is installed
     const { stdout: checkOut } = await execFileAsync(
-      PYTHON, ["-c", "import yfinance"],
+      PYTHON, ["-c", "import yfinance; print('OK')"],
       { timeout: 10_000 }
     ).catch(() => ({ stdout: "", stderr: "import failed" }));
 
-    if (!checkOut && checkOut !== undefined) {
-      // yfinance import failed — install it
-      console.log("[screen] yfinance missing, auto-installing...");
-      await execFileAsync(
-        PYTHON, ["-m", "pip", "install", "yfinance", "pandas", "numpy", "--quiet"],
+    if (!checkOut.includes("OK")) {
+      // yfinance not installed — install in background, return null (will fall through to published data)
+      console.log("[screen] yfinance missing — installing in background...");
+      execFileAsync(
+        PYTHON, ["-m", "pip", "install", "yfinance", "curl_cffi", "pandas", "numpy", "--quiet"],
         { timeout: 120_000 }
-      );
+      ).then(() => console.log("[screen] yfinance installed in background")).catch(() => {});
+      return null; // Fall through to published data or CSV fallback
     }
 
     const filtersJson = JSON.stringify({ rsi_min: rsiMin, mcap_min_cr: mcapMin, vol_min: volMin });
@@ -203,7 +264,7 @@ async function tryCsvScreen(topN: number, rsiMin: number, mcapMin: number, volMi
     if (dataMap.size === 0) return null; // Yahoo rate-limited
 
     // Compute indicators for each stock
-    const metricsList = [];
+    const metricsList: StockMetrics[] = [];
     for (const sym of csvSymbols) {
       const data = dataMap.get(sym);
       if (!data) continue;
@@ -212,7 +273,7 @@ async function tryCsvScreen(topN: number, rsiMin: number, mcapMin: number, volMi
     }
 
     // Apply technical + volume filter
-    const techPassed = metricsList.filter((m) =>
+    const techPassed = metricsList.filter((m: StockMetrics) =>
       applyTechnicalFilter(m) && m.rsi14 > rsiMin && m.avgVolume30d > volMin
     );
     if (techPassed.length === 0) return null;
@@ -261,7 +322,7 @@ async function tryTypeScript(topN: number, rsiMin: number, mcapMin: number, volM
     const dataMap = await batchFetchDailyCandles(universe, "1y", 3);
     if (dataMap.size === 0) return null;
 
-    const metricsList = [];
+    const metricsList: StockMetrics[] = [];
     for (const sym of universe) {
       const data = dataMap.get(sym);
       if (!data) continue;
@@ -269,12 +330,12 @@ async function tryTypeScript(topN: number, rsiMin: number, mcapMin: number, volM
       if (m) metricsList.push(m);
     }
 
-    const techPassed = metricsList.filter((m) =>
+    const techPassed = metricsList.filter((m: StockMetrics) =>
       applyTechnicalFilter(m) && m.rsi14 > rsiMin && m.avgVolume30d > volMin
     );
     if (techPassed.length === 0) return null;
 
-    const techSymbols = techPassed.map((m) => m.symbol);
+    const techSymbols = techPassed.map((m: StockMetrics) => m.symbol);
     const quoteMap = await fetchBatchQuotes(techSymbols);
 
     const screened: ScreenedStock[] = [];

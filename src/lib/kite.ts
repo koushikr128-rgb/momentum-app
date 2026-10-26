@@ -242,3 +242,12 @@ export async function fetchOHLCQuote(
     previous_close: entry.ohlc?.close ?? entry.last_price ?? 0,
   };
 }
+
+// Stub functions for backwards compatibility (routes were removed but kept as safety net)
+export async function diagnoseHistorical(_accessToken: string, _instrumentToken: number = 256265): Promise<{ status: number; body: string }> {
+  return { status: 404, body: '{"error":"diagnose endpoint removed"}' };
+}
+
+export async function fetchHoldings(_accessToken: string): Promise<any[]> {
+  return [];
+}
