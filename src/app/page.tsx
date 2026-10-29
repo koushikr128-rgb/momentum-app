@@ -25,6 +25,7 @@ import {
 
 import { ScreenedStock, AllocationStock, StopLossStock, StressScenario, SetupType, SetupGrade } from "@/lib/indicators";
 import type { RegimeState } from "@/lib/regime";
+import { Sparkline } from "@/components/sparkline";
 
 type ScreenResponse = {
   universeSize: number;
@@ -498,6 +499,24 @@ export default function Home() {
   const [publishing, setPublishing] = useState(false);
   const [lastPublished, setLastPublished] = useState<string | null>(null);
 
+  // Sparkline data — 30-day price charts for each screened stock
+  const [sparklineData, setSparklineData] = useState<Record<string, number[]>>({});
+
+  // Fetch sparkline data whenever screen results change
+  useEffect(() => {
+    if (!screen?.top10 || screen.top10.length === 0) {
+      setSparklineData({});
+      return;
+    }
+    const symbols = screen.top10.map((s: any) => s.symbol).join(",");
+    fetch(`/api/sparklines?symbols=${symbols}`, { cache: "no-store" })
+      .then(r => r.json())
+      .then(data => {
+        if (data.sparklines) setSparklineData(data.sparklines);
+      })
+      .catch(() => {});
+  }, [screen?.runAt]);
+
   const publishToLive = useCallback(async () => {
     if (!screen || screen.top10.length === 0) {
       toast({ title: "No screen to publish", description: "Run the screen first" });
@@ -517,6 +536,44 @@ export default function Home() {
       toast({ title: "Publish failed", description: e.message, variant: "destructive" });
     } finally {
       setPublishing(false);
+    }
+  }, [screen]);
+
+  // ===== Refresh Prices — fetch live LTP without re-running the full screen =====
+  const [refreshingPrices, setRefreshingPrices] = useState(false);
+
+  const refreshPrices = useCallback(async () => {
+    if (!screen || screen.top10.length === 0) return;
+    setRefreshingPrices(true);
+    try {
+      const kiteTok = kiteAccessTokenRef.current || "";
+      const res = await fetch("/api/refresh-prices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stocks: screen.top10, kiteToken: kiteTok }),
+      });
+      if (!res.ok) throw new Error("Price refresh failed");
+      const data = await res.json();
+      if (data.prices) {
+        // Update prices in the screen object
+        const updatedTop10 = screen.top10.map((s: any) => {
+          const update = data.prices[s.symbol];
+          if (update) {
+            return { ...s, currentPrice: update.price, _priceChange: update.changePct };
+          }
+          return s;
+        });
+        const updatedScreen = { ...screen, top10: updatedTop10, _priceRefreshedAt: data.refreshedAt };
+        screenRef.current = updatedScreen;
+        setScreen(updatedScreen);
+        const count = Object.keys(data.prices).length;
+        const src = data.source === "zerodha" ? "Zerodha" : "Yahoo";
+        toast({ title: "✅ Prices refreshed", description: `${count} stocks updated from ${src}` });
+      }
+    } catch (e: any) {
+      toast({ title: "Price refresh failed", description: e.message, variant: "destructive" });
+    } finally {
+      setRefreshingPrices(false);
     }
   }, [screen]);
 
@@ -1011,6 +1068,13 @@ export default function Home() {
                 <span className="hidden sm:inline">{publishing ? "Publishing…" : "Publish to Live"}</span>
               </Button>
             )}
+            {/* Refresh Prices — fetch live LTP for all screened stocks */}
+            {screen && screen.top10.length > 0 && (
+              <Button onClick={refreshPrices} disabled={refreshingPrices} size="sm" variant="outline" className="h-7 px-2.5 text-[11px] border-blue-300 text-blue-700 hover:bg-blue-50" title="Refresh live prices for all stocks without re-running the full screen">
+                {refreshingPrices ? <RefreshCw className="w-3 h-3 sm:mr-1 animate-spin" /> : <Activity className="w-3 h-3 sm:mr-1" />}
+                <span className="hidden sm:inline">{refreshingPrices ? "Refreshing…" : "Refresh Prices"}</span>
+              </Button>
+            )}
             {/* Top N selector — pick portfolio size (5/10/15/20/25/30 stocks) */}
             <div className="flex items-center gap-1">
               <Label htmlFor="topn-select" className="text-[10px] text-muted-foreground hidden sm:inline">Top</Label>
@@ -1176,7 +1240,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full mt-3">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -2276,7 +2340,7 @@ function BridgeTradePlanCard({ stocks, regime }: { stocks: any[]; regime: Regime
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void }) {
+function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]> }) {
   if (running && (!screen || elapsedMs > 1000)) {
     const elapsed = elapsedMs ? (elapsedMs / 1000).toFixed(1) : "0.0";
     const isBridge = screenMode === "bridge";
@@ -2542,6 +2606,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                       <TableHead className="text-right">Entry</TableHead>
                       <TableHead className="text-right">Trailing SL</TableHead>
                       <TableHead className="text-right">Risk%</TableHead>
+                      <TableHead className="text-center hidden lg:table-cell">Trend</TableHead>
                       <TableHead className="text-right">1W %</TableHead>
                       <TableHead className="text-right hidden sm:table-cell">1M %</TableHead>
                       <TableHead className="text-right hidden sm:table-cell">6M %</TableHead>
@@ -2560,6 +2625,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                       <TableHead className="text-right hidden lg:table-cell">Sharpe</TableHead>
                       <TableHead>Setup</TableHead>
                       <TableHead className="text-right">Signal</TableHead>
+                      <TableHead className="text-center hidden lg:table-cell">Trend</TableHead>
                       <TableHead className="text-right hidden md:table-cell">Stop (₹)</TableHead>
                       <TableHead className="text-right hidden md:table-cell">R:R</TableHead>
                       <TableHead className="text-right hidden lg:table-cell">Vol</TableHead>
@@ -2597,6 +2663,9 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                             {s.riskPct?.toFixed(1)}%
                           </span>
                         </TableCell>
+                        <TableCell className="text-center hidden lg:table-cell">
+                          <Sparkline prices={sparklineData?.[s.symbol] || []} width={50} height={18} />
+                        </TableCell>
                         <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1wPct} /></TableCell>
                         <TableCell className="text-right tabular-nums hidden sm:table-cell"><ReturnCell pct={s.ret1mPct} /></TableCell>
                         <TableCell className="text-right tabular-nums hidden sm:table-cell font-semibold"><ReturnCell pct={s.ret6mPct} /></TableCell>
@@ -2617,6 +2686,9 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                         <TableCell className="text-right hidden lg:table-cell tabular-nums">{fmt(s.sharpe)}</TableCell>
                         <TableCell><SetupBadge type={s.setupType} grade={s.setupGrade} /></TableCell>
                         <TableCell className="text-right"><SignalScoreBadge score={s.signalScore} /></TableCell>
+                        <TableCell className="text-center hidden lg:table-cell">
+                          <Sparkline prices={sparklineData?.[s.symbol] || []} width={50} height={18} />
+                        </TableCell>
                         <TableCell className="text-right hidden md:table-cell tabular-nums text-red-600 font-semibold">₹{fmt(s.stopPrice)}</TableCell>
                         <TableCell className="text-right hidden md:table-cell tabular-nums">
                           <span className="text-[10px] font-semibold">{getRRForSetup(s.setupType, rrOverride ?? null).t2.toFixed(1)}:1</span>
