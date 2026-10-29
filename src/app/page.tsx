@@ -17,7 +17,7 @@ import { toast } from "@/hooks/use-toast";
 import {
   Activity, ArrowDown, ArrowUp, RefreshCw, AlertTriangle,
   ShieldAlert, TrendingUp, TrendingDown, Gauge, Wallet, Target, Zap, Timer, Clock,
-  Bell, BellRing, History, GitCompare, SlidersHorizontal, Search,
+  Bell, BellRing, History, GitCompare, SlidersHorizontal, Search, Star, Send,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -496,6 +496,101 @@ export default function Home() {
   useEffect(() => { if (screen?.top10?.length > 0) try { localStorage.setItem("nifty_last_screen", JSON.stringify(screen)); } catch {} }, [screen]);
 
   // ===== Publish screen results to GitHub (for Vercel live app) =====
+  // ===== Watchlist — stocks you're tracking, persists in localStorage =====
+  type WatchlistItem = {
+    symbol: string;
+    addedAt: string;
+    price: number;
+    setupType?: string;
+    signalScore?: number;
+  };
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+
+  // Load watchlist from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("nifty_watchlist");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) setWatchlist(parsed);
+      }
+    } catch {}
+  }, []);
+
+  // Save watchlist to localStorage whenever it changes
+  useEffect(() => {
+    try { localStorage.setItem("nifty_watchlist", JSON.stringify(watchlist)); } catch {}
+  }, [watchlist]);
+
+  const addToWatchlist = useCallback((stock: any) => {
+    setWatchlist(prev => {
+      if (prev.some(w => w.symbol === stock.symbol)) return prev;
+      return [...prev, {
+        symbol: stock.symbol,
+        addedAt: new Date().toISOString(),
+        price: stock.currentPrice,
+        setupType: stock.setupType,
+        signalScore: stock.signalScore,
+      }];
+    });
+    toast({ title: "⭐ Added to Watchlist", description: stock.symbol });
+  }, []);
+
+  const removeFromWatchlist = useCallback((symbol: string) => {
+    setWatchlist(prev => prev.filter(w => w.symbol !== symbol));
+    toast({ title: "Removed from Watchlist", description: symbol });
+  }, []);
+
+  const isInWatchlist = useCallback((symbol: string) => {
+    return watchlist.some(w => w.symbol === symbol);
+  }, [watchlist]);
+
+  // ===== Telegram alerts config =====
+  const [telegramConfig, setTelegramConfig] = useState<{ botToken: string; chatId: string; enabled: boolean }>({
+    botToken: "",
+    chatId: "",
+    enabled: false,
+  });
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("nifty_telegram");
+      if (stored) setTelegramConfig(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("nifty_telegram", JSON.stringify(telegramConfig)); } catch {}
+  }, [telegramConfig]);
+
+  const sendTelegramAlert = useCallback(async (message: string) => {
+    if (!telegramConfig.enabled || !telegramConfig.botToken || !telegramConfig.chatId) return;
+    try {
+      await fetch(`/api/telegram-alert`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          botToken: telegramConfig.botToken,
+          chatId: telegramConfig.chatId,
+          message,
+        }),
+      });
+    } catch {}
+  }, [telegramConfig]);
+
+  // Send alert when screen completes with new A+ stocks
+  const lastTelegramAlertedRef = useRef<string>("");
+  useEffect(() => {
+    if (!screen?.top10 || !telegramConfig.enabled) return;
+    const aPlusStocks = screen.top10.filter((s: any) => s.setupGrade === "A+" || (s.signalScore ?? 0) >= 85);
+    if (aPlusStocks.length === 0) return;
+    const symbols = aPlusStocks.map((s: any) => s.symbol).sort().join(",");
+    if (lastTelegramAlertedRef.current === symbols) return;
+    lastTelegramAlertedRef.current = symbols;
+    const msg = `🚀 ${aPlusStocks.length} new A+ signal${aPlusStocks.length > 1 ? "s" : ""}:\n${aPlusStocks.map((s: any) => `• ${s.symbol} — ${s.setupType} (Signal: ${s.signalScore})`).join("\n")}`;
+    sendTelegramAlert(msg);
+  }, [screen?.runAt, telegramConfig.enabled, sendTelegramAlert]);
+
   const [publishing, setPublishing] = useState(false);
   const [lastPublished, setLastPublished] = useState<string | null>(null);
 
@@ -1240,7 +1335,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full mt-3">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} watchlist={watchlist} addToWatchlist={addToWatchlist} removeFromWatchlist={removeFromWatchlist} isInWatchlist={isInWatchlist} onAnalyzeWatchlist={(sym) => { setTab("analyze"); runAnalyze(sym); }} telegramConfig={telegramConfig} setTelegramConfig={setTelegramConfig} sendTelegramAlert={sendTelegramAlert} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -2340,7 +2435,7 @@ function BridgeTradePlanCard({ stocks, regime }: { stocks: any[]; regime: Regime
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]> }) {
+function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void }) {
   if (running && (!screen || elapsedMs > 1000)) {
     const elapsed = elapsedMs ? (elapsedMs / 1000).toFixed(1) : "0.0";
     const isBridge = screenMode === "bridge";
@@ -2631,6 +2726,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                       <TableHead className="text-right hidden lg:table-cell">Vol</TableHead>
                     </>
                   )}
+                  <TableHead className="w-10 text-center"><Star className="w-3 h-3 inline text-muted-foreground" /></TableHead>
                   {onAnalyze && <TableHead className="text-right">Analyze</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -2698,6 +2794,11 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                         </TableCell>
                       </>
                     )}
+                    <TableCell className="text-center">
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => { if (isInWatchlist?.(s.symbol)) removeFromWatchlist?.(s.symbol); else addToWatchlist?.(s); }} title={isInWatchlist?.(s.symbol) ? "Remove from watchlist" : "Add to watchlist"}>
+                        <Star className={`h-4 w-4 ${isInWatchlist?.(s.symbol) ? "text-yellow-500 fill-yellow-400" : "text-muted-foreground"}`} />
+                      </Button>
+                    </TableCell>
                     {onAnalyze && (
                       <TableCell className="text-right">
                         <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] gap-1" onClick={() => onAnalyze(s.symbol)}>
@@ -2721,7 +2822,187 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
         setSearchSymbol={setHistorySearchSymbol || (() => {})}
         currentScreenSymbols={screen?.top10?.map((s: any) => s.symbol) || []}
       />
+
+      {/* Watchlist — starred stocks, persisted in localStorage */}
+      <WatchlistCard
+        watchlist={watchlist || []}
+        onAnalyze={onAnalyzeWatchlist}
+        onRemove={removeFromWatchlist}
+      />
+
+      {/* Telegram Alerts settings */}
+      <TelegramSettingsCard
+        config={telegramConfig || { botToken: "", chatId: "", enabled: false }}
+        setConfig={setTelegramConfig}
+        sendAlert={sendTelegramAlert}
+      />
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------- WatchlistCard */
+function WatchlistCard({ watchlist, onAnalyze, onRemove }: {
+  watchlist: any[];
+  onAnalyze?: (symbol: string) => void;
+  onRemove?: (symbol: string) => void;
+}) {
+  return (
+    <Card className="card-pastel">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Star className="w-4 h-4 text-yellow-500 fill-yellow-400" />
+          ⭐ Watchlist
+          <Badge variant="secondary" className="text-[10px] tabular-nums h-5">{watchlist.length}</Badge>
+        </CardTitle>
+        <CardDescription className="text-[10px]">
+          Stocks you're tracking · saved in your browser · click the ⭐ next to any stock to add or remove it
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {watchlist.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
+            No stocks in watchlist. Click the star icon next to any stock to add it.
+          </div>
+        ) : (
+          <div className="table-scroll-wrapper sticky-header-table max-h-96 overflow-y-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-[10px]">Symbol</TableHead>
+                  <TableHead className="text-[10px]">Setup</TableHead>
+                  <TableHead className="text-[10px] text-right">Signal</TableHead>
+                  <TableHead className="text-[10px] text-right">Price</TableHead>
+                  <TableHead className="text-[10px]">Added</TableHead>
+                  <TableHead className="text-[10px] text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {watchlist.map((w) => (
+                  <TableRow key={w.symbol}>
+                    <TableCell className="font-semibold text-sm">{w.symbol}</TableCell>
+                    <TableCell>
+                      {w.setupType
+                        ? <SetupBadge type={w.setupType as SetupType} />
+                        : <span className="text-muted-foreground text-[10px]">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {typeof w.signalScore === "number"
+                        ? <SignalScoreBadge score={w.signalScore} />
+                        : <span className="text-muted-foreground text-[10px]">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">₹{fmt(w.price)}</TableCell>
+                    <TableCell className="text-[10px] text-muted-foreground tabular-nums">{fmtISTDate(w.addedAt)}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="inline-flex gap-1">
+                        {onAnalyze && (
+                          <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] gap-1" onClick={() => onAnalyze(w.symbol)} title="Analyze">
+                            <Search className="w-3 h-3" /> 🔍
+                          </Button>
+                        )}
+                        {onRemove && (
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-red-600" onClick={() => onRemove(w.symbol)} title="Remove">
+                            ✕
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------- TelegramSettingsCard */
+function TelegramSettingsCard({ config, setConfig, sendAlert }: {
+  config: { botToken: string; chatId: string; enabled: boolean };
+  setConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void;
+  sendAlert?: (message: string) => void;
+}) {
+  const [sending, setSending] = useState(false);
+  const handleTest = async () => {
+    if (!sendAlert) return;
+    if (!config.botToken || !config.chatId) {
+      toast({ title: "Missing config", description: "Enter your Bot Token and Chat ID first.", variant: "destructive" });
+      return;
+    }
+    setSending(true);
+    try {
+      await sendAlert("✅ Test alert from Momentum Dashboard!");
+      toast({ title: "Test alert sent", description: "Check your Telegram chat for the message." });
+    } catch {
+      toast({ title: "Failed to send", description: "Check your bot token and chat ID.", variant: "destructive" });
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <Card className="card-pastel">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <div>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Send className="w-4 h-4 text-primary" />
+            Telegram Alerts
+          </CardTitle>
+          <CardDescription className="text-[10px] mt-0.5">
+            Get notified when new A+ signals appear · config saved in your browser
+          </CardDescription>
+        </div>
+        {setConfig && (
+          <Switch
+            checked={config.enabled}
+            onCheckedChange={(v) => setConfig({ ...config, enabled: v })}
+            aria-label="Toggle Telegram alerts"
+          />
+        )}
+      </CardHeader>
+      <CardContent className="pt-0">
+        {!config.enabled ? (
+          <div className="text-xs text-muted-foreground p-3 rounded-lg border border-dashed border-border/60 text-center">
+            {setConfig
+              ? <>Enable the switch and <b>Configure</b> below to receive alerts.</>
+              : "Telegram alerts are disabled."}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-[11px]">Bot Token</Label>
+              <Input
+                type="password"
+                placeholder="123456789:ABCdef..."
+                value={config.botToken}
+                onChange={(e) => setConfig?.({ ...config, botToken: e.target.value })}
+                className="text-xs font-mono"
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[11px]">Chat ID</Label>
+              <Input
+                type="text"
+                placeholder="your_chat_id"
+                value={config.chatId}
+                onChange={(e) => setConfig?.({ ...config, chatId: e.target.value })}
+                className="text-xs font-mono"
+                autoComplete="off"
+              />
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-1">
+              <p className="text-[10px] text-muted-foreground">
+                Create a bot with <b>@BotFather</b>, then get your chat ID from <b>@userinfobot</b>
+              </p>
+              <Button size="sm" className="h-7 text-[11px] gap-1 shrink-0" onClick={handleTest} disabled={sending || !sendAlert}>
+                <Send className="w-3 h-3" /> {sending ? "Sending…" : "Send Test Alert"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
