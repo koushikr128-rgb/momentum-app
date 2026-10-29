@@ -2528,7 +2528,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
               </p>
             </div>
           ) : (
-          <div className="overflow-x-auto">
+          <div className="table-scroll-wrapper sticky-header-table">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -2760,7 +2760,7 @@ function ScreenHistoryCard({ history, searchSymbol, setSearchSymbol, currentScre
               </div>
             )}
 
-            <div className="overflow-x-auto">
+            <div className="table-scroll-wrapper sticky-header-table">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -2968,7 +2968,7 @@ function AllocationPanel({
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
+              <div className="table-scroll-wrapper sticky-header-table">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -3079,7 +3079,7 @@ function StopLossPanel({ stops, running, onRefresh, hasAlloc, onGoToAlloc }: {
         </CardHeader>
         <CardContent>
           {running && !stops ? <Skeleton className="h-48 w-full" /> : stops ? (
-            <div className="overflow-x-auto">
+            <div className="table-scroll-wrapper sticky-header-table">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -3241,7 +3241,7 @@ function StressPanel({ stress, onRun, hasAlloc, onGoToAlloc }: {
                       {sc.drawdownPct.toFixed(2)}% drawdown
                     </Badge>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="table-scroll-wrapper sticky-header-table">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -3741,7 +3741,7 @@ function RiskPanel({ correlation, running, onRun, hasAlloc, onGoToAlloc }: {
               )}
 
               {/* Correlation heatmap */}
-              <div className="overflow-x-auto">
+              <div className="table-scroll-wrapper sticky-header-table">
                 <table className="border-collapse text-xs">
                   <thead>
                     <tr>
