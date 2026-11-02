@@ -1,0 +1,602 @@
+     1→  2492→/* ---------------------------------------------------------------- ScreenPanel */
+     2→  2493→function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void }) {
+     3→  2494→  if (running && (!screen || elapsedMs > 1000)) {
+     4→  2495→    const elapsed = elapsedMs ? (elapsedMs / 1000).toFixed(1) : "0.0";
+     5→  2496→    const isBridge = screenMode === "bridge";
+     6→  2497→    const estTotal = isBridge ? 20 : 30; // bridge now takes ~17s (top 250 + 18mo), momentum ~30s
+     7→  2498→    const pct = Math.min(95, (elapsedMs || 0) / (estTotal * 10));
+     8→  2499→    return (
+     9→  2500→      <Card className="card-pastel">
+    10→  2501→        <CardContent className="p-8">
+    11→  2502→          <div className="flex flex-col items-center justify-center text-center space-y-4">
+    12→  2503→            <div className="relative">
+    13→  2504→              <RefreshCw className="w-12 h-12 text-primary animate-spin" />
+    14→  2505→            </div>
+    15→  2506→            <div>
+    16→  2507→              <h3 className="text-base font-semibold text-foreground">
+    17→  2508→                {isBridge ? "Running Pullback Bridge Screener…" : "Fetching live market data…"}
+    18→  2509→              </h3>
+    19→  2510→              <p className="text-sm text-muted-foreground mt-1">
+    20→  2511→                {isBridge
+    21→  2512→                  ? "Downloading 18 months of data for top 250 NSE stocks (by market cap), computing Monthly RSI + Daily 20 EMA + Anchor Candle + 50% Retracement. Takes ~17 seconds."
+    22→  2513→                  : "Downloading 18 months of OHLCV for ~350 NSE stocks, computing RSI/MA/returns, then fetching market cap + sector for qualifiers."}
+    23→  2514→              </p>
+    24→  2515→            </div>
+    25→  2516→            <div className="w-full max-w-md space-y-2">
+    26→  2517→              <Progress value={pct} className="h-2" />
+    27→  2518→              <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+    28→  2519→                <span>{elapsed}s elapsed</span>
+    29→  2520→                <span>est. {isBridge ? "15-20s" : "25-30s"} total</span>
+    30→  2521→              </div>
+    31→  2522→            </div>
+    32→  2523→            {isBridge && (
+    33→  2524→              <div className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-md p-2 max-w-md">
+    34→  2525→                Scanning top 250 stocks by market cap · 18 months of data for Monthly RSI
+    35→  2526→              </div>
+    36→  2527→            )}
+    37→  2528→            <div className="grid grid-cols-3 gap-2 w-full max-w-md text-xs">
+    38→  2529→              <div className="pastel-info rounded-md p-2 text-center">
+    39→  2530→                <div className="font-bold tabular-nums">1</div>
+    40→  2531→                <div className="text-[10px] opacity-80">{isBridge ? "Download 2Y" : "Download OHLCV"}</div>
+    41→  2532→              </div>
+    42→  2533→              <div className="pastel-warning rounded-md p-2 text-center">
+    43→  2534→                <div className="font-bold tabular-nums">2</div>
+    44→  2535→                <div className="text-[10px] opacity-80">{isBridge ? "Monthly RSI + EMAs" : "Compute indicators"}</div>
+    45→  2536→              </div>
+    46→  2537→              <div className="pastel-purple rounded-md p-2 text-center">
+    47→  2538→                <div className="font-bold tabular-nums">3</div>
+    48→  2539→                <div className="text-[10px] opacity-80">Fetch market cap</div>
+    49→  2540→              </div>
+    50→  2541→            </div>
+    51→  2542→          </div>
+    52→  2543→        </CardContent>
+    53→  2544→      </Card>
+    54→  2545→    );
+    55→  2546→  }
+    56→  2547→  if (!screen) {
+    57→  2548→    const isBridge = screenMode === "bridge";
+    58→  2549→    return (
+    59→  2550→      <Card className="card-pastel">
+    60→  2551→        <CardHeader>
+    61→  2552→          <CardTitle className="flex items-center gap-2">
+    62→  2553→            <TrendingUp className="w-5 h-5 text-primary" />
+    63→  2554→            {isBridge ? "Pullback Bridge Screener — Not yet run" : "Momentum Screen — Not yet run"}
+    64→  2555→          </CardTitle>
+    65→  2556→          <CardDescription>
+    66→  2557→            {isBridge
+    67→  2558→              ? <>Click <b>Run Bridge</b> to find stocks with Monthly RSI 60–72, trend intact, and at least one entry tactic READY.</>
+    68→  2559→              : <>Click <b>Run Screen</b> at the top to fetch live data for ~350 NSE stocks and apply the 6 momentum rules.</>
+    69→  2560→            }
+    70→  2561→          </CardDescription>
+    71→  2562→        </CardHeader>
+    72→  2563→        <CardContent>
+    73→  2564→          <div className="rounded-lg border border-dashed border-slate-300 p-6 text-sm text-muted-foreground">
+    74→  2565→            <p className="mb-2 font-medium text-foreground dark:text-muted-foreground/50">
+    75→  2566→              {isBridge ? "Bridge screening rules:" : "Screening rules:"}
+    76→  2567→            </p>
+    77→  2568→            {isBridge ? (
+    78→  2569→              <ul className="list-disc pl-5 space-y-1">
+    79→  2570→                <li>Monthly RSI between 55–75 (macro filter — multi-month momentum active)</li>
+    80→  2571→                <li>Price &gt; 50 DMA &gt; 200 DMA (trend intact)</li>
+    81→  2572→                <li>At least one entry tactic READY or TRIGGERED:
+    82→  2573→                  <ul className="list-circle pl-4 mt-1 text-xs">
+    83→  2574→                    <li>Daily 20 EMA Touchdown</li>
+    84→  2575→                    <li>Anchor Candle High Break</li>
+    85→  2576→                    <li>50% Monthly Range Retracement</li>
+    86→  2577→                  </ul>
+    87→  2578→                </li>
+    88→  2579→                <li>Market Cap &gt; ₹{filters.mcapMin} Cr</li>
+    89→  2580→                <li><b>Sort</b>: Bridge Score DESC, top {topN}</li>
+    90→  2581→                <li>Each stock comes with a <b>trailing stop-loss</b> (previous week's low)</li>
+    91→  2582→              </ul>
+    92→  2583→            ) : (
+    93→  2584→              <ul className="list-disc pl-5 space-y-1">
+    94→  2585→                <li>Current Price &gt; 200 DMA</li>
+    95→  2586→                <li>Current Price &gt; 50 DMA</li>
+    96→  2587→                <li>50 DMA &gt; 200 DMA</li>
+    97→  2588→                <li>RSI(14) &gt; {filters.rsiMin}</li>
+    98→  2589→                <li>Market Cap &gt; ₹{filters.mcapMin} Cr</li>
+    99→  2590→                <li>30-day Avg Volume &gt; {filters.volMin.toLocaleString("en-IN")}</li>
+   100→  2591→                <li><b>Sort</b>: Signal Score DESC, top {topN}</li>
+   101→  2592→              </ul>
+   102→  2593→            )}
+   103→  2594→          </div>
+   104→  2595→        </CardContent>
+   105→  2596→      </Card>
+   106→  2597→    );
+   107→  2598→  }
+   108→  2599→  return (
+   109→  2600→    <div className="space-y-4">
+   110→  2601→      {/* Error/warning banner — Yahoo rate-limited or showing stale/fallback data */}
+   111→  2602→      {(screen.error || screen.warning) && (
+   112→  2603→        <Card className={`card-pastel ${screen.error ? "border-red-300/60 bg-red-50/50" : "border-amber-300/60 bg-amber-50/50"}`}>
+   113→  2604→          <CardContent className="p-4 flex items-start gap-3">
+   114→  2605→            <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${screen.error ? "text-red-600" : "text-amber-600"}`} />
+   115→  2606→            <div className="flex-1">
+   116→  2607→              <p className={`text-sm font-medium ${screen.error ? "text-red-900" : "text-amber-900"}`}>
+   117→  2608→                {screen.error
+   118→  2609→                  ? "Yahoo Finance rate-limited"
+   119→  2610→                  : screen.fallback
+   120→  2611→                    ? "Showing fallback data"
+   121→  2612→                    : screen.stale
+   122→  2613→                      ? "Showing cached data"
+   123→  2614→                      : "Notice"}
+   124→  2615→              </p>
+   125→  2616→              <p className={`text-xs mt-1 ${screen.error ? "text-red-700" : "text-amber-700"}`}>
+   126→  2617→                {screen.error || screen.warning}
+   127→  2618→              </p>
+   128→  2619→              <p className={`text-xs mt-2 ${screen.error ? "text-red-600" : "text-amber-600"}`}>
+   129→  2620→                {screen.error
+   130→  2621→                  ? "The screen will auto-retry. You can also click \"Run Screen\" again in a minute."
+   131→  2622→                  : "Data below is from an earlier successful fetch. Click \"Run Screen\" to try fetching fresh data."}
+   132→  2623→              </p>
+   133→  2624→            </div>
+   134→  2625→          </CardContent>
+   135→  2626→        </Card>
+   136→  2627→      )}
+   137→  2628→      {/* Stats */}
+   138→  2629→      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   139→  2630→        <StatCard icon={<Activity className="w-4 h-4" />} label="Universe" value={String(screen.universeSize)} sub="NSE stocks" />
+   140→  2631→        <StatCard icon={<TrendingUp className="w-4 h-4" />} label="With full data" value={String(screen.passedData)} sub="18-month OHLCV" />
+   141→  2632→        <StatCard icon={<Gauge className="w-4 h-4" />} label="Pass technical" value={String(screen.passedTech)} sub="MA + RSI + Vol" />
+   142→  2633→        <StatCard icon={<Wallet className="w-4 h-4" />} label="Pass market cap" value={String(screen.passedMc)} sub="> ₹500 Cr" tone="emerald" />
+   143→  2634→      </div>
+   144→  2635→
+   145→  2636→      {/* Change History — shows when stocks were added/removed with dates */}
+   146→  2637→      {changeHistory && changeHistory.length > 0 && (
+   147→  2638→        <Card className="card-pastel">
+   148→  2639→          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+   149→  2640→            <div>
+   150→  2641→              <CardTitle className="flex items-center gap-2 text-base">
+   151→  2642→                <History className="w-4 h-4 text-primary" /> Change History
+   152→  2643→              </CardTitle>
+   153→  2644→              <CardDescription className="text-[10px] mt-0.5">
+   154→  2645→                When stocks entered or left your Top {topN} · persisted across sessions
+   155→  2646→              </CardDescription>
+   156→  2647→            </div>
+   157→  2648→            {onClearHistory && (
+   158→  2649→              <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground" onClick={onClearHistory}>
+   159→  2650→                Clear
+   160→  2651→              </Button>
+   161→  2652→            )}
+   162→  2653→          </CardHeader>
+   163→  2654→          <CardContent className="pt-0">
+   164→  2655→            <div className="space-y-3 max-h-72 overflow-y-auto scroll-pastel">
+   165→  2656→              {/* Show most recent first */}
+   166→  2657→              {[...changeHistory].reverse().slice(0, 10).map((change, idx) => {
+   167→  2658→                const date = new Date(change.date);
+   168→  2659→                const dateStr = fmtISTDate(change.date);
+   169→  2660→                const timeStr = fmtISTTime(change.date);
+   170→  2661→                const isMostRecent = idx === 0;
+   171→  2662→                return (
+   172→  2663→                  <div key={change.date} className={`p-3 rounded-lg border ${isMostRecent ? "border-primary/30 bg-primary/5" : "border-border/40"}`}>
+   173→  2664→                    <div className="flex items-center justify-between mb-2">
+   174→  2665→                      <div className="flex items-center gap-2">
+   175→  2666→                        <span className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded ${isMostRecent ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+   176→  2667→                          {dateStr}
+   177→  2668→                        </span>
+   178→  2669→                        <span className="text-[10px] text-muted-foreground tabular-nums">{timeStr}</span>
+   179→  2670→                        {isMostRecent && <span className="text-[9px] font-semibold text-primary uppercase tracking-wide">Latest</span>}
+   180→  2671→                      </div>
+   181→  2672→                      <span className="text-[10px] text-muted-foreground">
+   182→  2673→                        {change.added.length > 0 || change.removed.length > 0
+   183→  2674→                          ? `${change.added.length} added · ${change.removed.length} removed`
+   184→  2675→                          : "No changes"}
+   185→  2676→                      </span>
+   186→  2677→                    </div>
+   187→  2678→                    <div className="space-y-1.5">
+   188→  2679→                      {change.added.length > 0 && (
+   189→  2680→                        <div className="flex flex-wrap items-center gap-1">
+   190→  2681→                          <span className="text-[9px] font-semibold text-emerald-600 mr-1">↑</span>
+   191→  2682→                          {change.added.map((s) => (
+   192→  2683→                            <span key={s.symbol} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium pastel-positive">
+   193→  2684→                              {s.symbol}
+   194→  2685→                              <span className="opacity-60">+{s.ret6mPct.toFixed(0)}%</span>
+   195→  2686→                            </span>
+   196→  2687→                          ))}
+   197→  2688→                        </div>
+   198→  2689→                      )}
+   199→  2690→                      {change.removed.length > 0 && (
+   200→  2691→                        <div className="flex flex-wrap items-center gap-1">
+   201→  2692→                          <span className="text-[9px] font-semibold text-red-600 mr-1">↓</span>
+   202→  2693→                          {change.removed.map((sym) => (
+   203→  2694→                            <span key={sym} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium pastel-negative line-through opacity-70">
+   204→  2695→                              {sym}
+   205→  2696→                            </span>
+   206→  2697→                          ))}
+   207→  2698→                        </div>
+   208→  2699→                      )}
+   209→  2700→                    </div>
+   210→  2701→                  </div>
+   211→  2702→                );
+   212→  2703→              })}
+   213→  2704→            </div>
+   214→  2705→          </CardContent>
+   215→  2706→        </Card>
+   216→  2707→      )}
+   217→  2708→
+   218→  2709→      {/* Trade Plan card — top 5 setups (momentum mode only; bridge has its own table) */}
+   219→  2710→      {screen.top10.length > 0 && onAnalyze && screenMode !== "bridge" && (
+   220→  2711→        <TradePlanCard stocks={screen.top10.slice(0, 5)} regime={regime ?? null} rrOverride={rrOverride ?? null} setRrOverride={setRrOverride ?? null} />
+   221→  2712→      )}
+   222→  2713→
+   223→  2714→      {/* Bridge mode — Trade Plan cards with trailing SL */}
+   224→  2715→      {screen.top10.length > 0 && screenMode === "bridge" && (
+   225→  2716→        <BridgeTradePlanCard stocks={screen.top10.slice(0, 5)} regime={regime ?? null} />
+   226→  2717→      )}
+   227→  2718→
+   228→  2719→      {/* Top 10 table */}
+   229→  2720→      <Card className="card-pastel">
+   230→  2721→        <CardHeader>
+   231→  2722→          <CardTitle>{screenMode === "bridge" ? `Top ${screen.top10.length} Pullback Bridge Stocks` : `Top ${screen.top10.length} Momentum Stocks`}</CardTitle>
+   232→  2723→          <CardDescription>
+   233→  2724→            {screenMode === "bridge"
+   234→  2725→              ? <>Ranked by Bridge Score · Monthly RSI 55–75 · Entry tactics READY · Trailing SL = prev week low · as of {fmtISTDateTime(screen.runAt)}</>
+   235→  2726→              : <>Ranked by composite Signal Score (0-100) · Screen took {(screen.elapsedMs / 1000).toFixed(1)}s · as of {fmtISTDateTime(screen.runAt)}</>
+   236→  2727→            }
+   237→  2728→          </CardDescription>
+   238→  2729→        </CardHeader>
+   239→  2730→        <CardContent>
+   240→  2731→          {screen.top10.length === 0 ? (
+   241→  2732→            <div className="p-6 text-center space-y-3">
+   242→  2733→              <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
+   243→  2734→              <div>
+   244→  2735→                <p className="text-sm font-medium text-foreground">No stocks passed the filters</p>
+   245→  2736→                <p className="text-xs text-muted-foreground mt-1">
+   246→  2737→                  This is usually because Yahoo Finance rate-limited the market cap lookup. Try again in 30 seconds.
+   247→  2738→                </p>
+   248→  2739→              </div>
+   249→  2740→              <p className="text-xs text-muted-foreground">
+   250→  2741→                {screen.passedTech} stocks passed technical filters but market cap data couldn't be fetched for all of them.
+   251→  2742→              </p>
+   252→  2743→            </div>
+   253→  2744→          ) : (
+   254→  2745→          <div className="table-scroll-wrapper sticky-header-table">
+   255→  2746→            <Table>
+   256→  2747→              <TableHeader>
+   257→  2748→                <TableRow>
+   258→  2749→                  <TableHead className="w-12">#</TableHead>
+   259→  2750→                  <TableHead>Symbol</TableHead>
+   260→  2751→                  {screenMode === "bridge" ? (
+   261→  2752→                    <>
+   262→  2753→                      <TableHead className="text-right">Monthly RSI</TableHead>
+   263→  2754→                      <TableHead className="text-right">Bridge</TableHead>
+   264→  2755→                      <TableHead>Active Tactic</TableHead>
+   265→  2756→                      <TableHead className="text-right">Entry</TableHead>
+   266→  2757→                      <TableHead className="text-right">Trailing SL</TableHead>
+   267→  2758→                      <TableHead className="text-right">Risk%</TableHead>
+   268→  2759→                      <TableHead className="text-center hidden lg:table-cell">Trend</TableHead>
+   269→  2760→                      <TableHead className="text-right">1W %</TableHead>
+   270→  2761→                      <TableHead className="text-right hidden sm:table-cell">1M %</TableHead>
+   271→  2762→                      <TableHead className="text-right hidden sm:table-cell">6M %</TableHead>
+   272→  2763→                      <TableHead className="text-right hidden md:table-cell">Price</TableHead>
+   273→  2764→                    </>
+   274→  2765→                  ) : (
+   275→  2766→                    <>
+   276→  2767→                      <TableHead className="hidden md:table-cell">Sector</TableHead>
+   277→  2768→                      <TableHead className="text-right">Price (₹)</TableHead>
+   278→  2769→                      <TableHead className="text-right">RSI</TableHead>
+   279→  2770→                      <TableHead className="text-right hidden sm:table-cell">MCap (₹Cr)</TableHead>
+   280→  2771→                      <TableHead className="text-right">1W %</TableHead>
+   281→  2772→                      <TableHead className="text-right">1M %</TableHead>
+   282→  2773→                      <TableHead className="text-right hidden sm:table-cell">3M %</TableHead>
+   283→  2774→                      <TableHead className="text-right hidden md:table-cell">6M %</TableHead>
+   284→  2775→                      <TableHead className="text-right hidden lg:table-cell">Sharpe</TableHead>
+   285→  2776→                      <TableHead>Setup</TableHead>
+   286→  2777→                      <TableHead className="text-right">Signal</TableHead>
+   287→  2778→                      <TableHead className="text-center hidden lg:table-cell">Trend</TableHead>
+   288→  2779→                      <TableHead className="text-right hidden md:table-cell">Stop (₹)</TableHead>
+   289→  2780→                      <TableHead className="text-right hidden md:table-cell">R:R</TableHead>
+   290→  2781→                      <TableHead className="text-right hidden lg:table-cell">Vol</TableHead>
+   291→  2782→                    </>
+   292→  2783→                  )}
+   293→  2784→                  <TableHead className="w-10 text-center"><Star className="w-3 h-3 inline text-muted-foreground" /></TableHead>
+   294→  2785→                  {onAnalyze && <TableHead className="text-right">Analyze</TableHead>}
+   295→  2786→                </TableRow>
+   296→  2787→              </TableHeader>
+   297→  2788→              <TableBody>
+   298→  2789→                {screen.top10.map((s: any) => (
+   299→  2790→                  <TableRow key={s.symbol}>
+   300→  2791→                    <TableCell className="font-bold text-muted-foreground/70">{s.rank}</TableCell>
+   301→  2792→                    <TableCell>
+   302→  2793→                      <div className="font-semibold">{s.symbol}</div>
+   303→  2794→                      <div className="text-xs text-muted-foreground line-clamp-1 max-w-[160px]">{s.longName}</div>
+   304→  2795→                    </TableCell>
+   305→  2796→                    {screenMode === "bridge" ? (
+   306→  2797→                      <>
+   307→  2798→                        <TableCell className="text-right">
+   308→  2799→                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums ${s.macroFilterPass ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"}`}>
+   309→  2800→                            {s.monthlyRsi?.toFixed(1)}
+   310→  2801→                          </span>
+   311→  2802→                        </TableCell>
+   312→  2803→                        <TableCell className="text-right">
+   313→  2804→                          <SignalScoreBadge score={s.bridgeScore ?? 0} />
+   314→  2805→                        </TableCell>
+   315→  2806→                        <TableCell>
+   316→  2807→                          <div className="text-[10px] font-semibold leading-tight">{s.activeTactic}</div>
+   317→  2808→                          <div className="text-[9px] text-muted-foreground">{s.activeTacticId === "anchor_break" ? "Momentum" : s.activeTacticId === "ema_touchdown" ? "Safest" : "Value"}</div>
+   318→  2809→                        </TableCell>
+   319→  2810→                        <TableCell className="text-right tabular-nums text-emerald-600 font-semibold">₹{fmt(s.entryPrice)}</TableCell>
+   320→  2811→                        <TableCell className="text-right tabular-nums text-red-600 font-semibold">₹{fmt(s.trailingSL)}</TableCell>
+   321→  2812→                        <TableCell className="text-right">
+   322→  2813→                          <span className={`text-[10px] font-bold tabular-nums ${s.riskPct < 5 ? "text-emerald-600" : s.riskPct < 8 ? "text-amber-600" : "text-red-600"}`}>
+   323→  2814→                            {s.riskPct?.toFixed(1)}%
+   324→  2815→                          </span>
+   325→  2816→                        </TableCell>
+   326→  2817→                        <TableCell className="text-center hidden lg:table-cell">
+   327→  2818→                          <Sparkline prices={sparklineData?.[s.symbol] || []} width={50} height={18} />
+   328→  2819→                        </TableCell>
+   329→  2820→                        <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1wPct} /></TableCell>
+   330→  2821→                        <TableCell className="text-right tabular-nums hidden sm:table-cell"><ReturnCell pct={s.ret1mPct} /></TableCell>
+   331→  2822→                        <TableCell className="text-right tabular-nums hidden sm:table-cell font-semibold"><ReturnCell pct={s.ret6mPct} /></TableCell>
+   332→  2823→                        <TableCell className="text-right tabular-nums hidden md:table-cell">₹{fmt(s.currentPrice)}</TableCell>
+   333→  2824→                      </>
+   334→  2825→                    ) : (
+   335→  2826→                      <>
+   336→  2827→                        <TableCell className="hidden md:table-cell text-muted-foreground">{s.sector}</TableCell>
+   337→  2828→                        <TableCell className="text-right tabular-nums">{fmt(s.currentPrice)}</TableCell>
+   338→  2829→                        <TableCell className="text-right">
+   339→  2830→                          <RsiBadge rsi={s.rsi14} />
+   340→  2831→                        </TableCell>
+   341→  2832→                        <TableCell className="text-right hidden sm:table-cell tabular-nums">{fmt(s.marketCapCr, 0)}</TableCell>
+   342→  2833→                        <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1wPct} /></TableCell>
+   343→  2834→                        <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1mPct} /></TableCell>
+   344→  2835→                        <TableCell className="text-right hidden sm:table-cell tabular-nums"><ReturnCell pct={s.ret3mPct} /></TableCell>
+   345→  2836→                        <TableCell className="text-right hidden md:table-cell tabular-nums font-semibold"><ReturnCell pct={s.ret6mPct} /></TableCell>
+   346→  2837→                        <TableCell className="text-right hidden lg:table-cell tabular-nums">{fmt(s.sharpe)}</TableCell>
+   347→  2838→                        <TableCell><SetupBadge type={s.setupType} grade={s.setupGrade} /></TableCell>
+   348→  2839→                        <TableCell className="text-right"><SignalScoreBadge score={s.signalScore} /></TableCell>
+   349→  2840→                        <TableCell className="text-center hidden lg:table-cell">
+   350→  2841→                          <Sparkline prices={sparklineData?.[s.symbol] || []} width={50} height={18} />
+   351→  2842→                        </TableCell>
+   352→  2843→                        <TableCell className="text-right hidden md:table-cell tabular-nums text-red-600 font-semibold">₹{fmt(s.stopPrice)}</TableCell>
+   353→  2844→                        <TableCell className="text-right hidden md:table-cell tabular-nums">
+   354→  2845→                          <span className="text-[10px] font-semibold">{getRRForSetup(s.setupType, rrOverride ?? null).t2.toFixed(1)}:1</span>
+   355→  2846→                        </TableCell>
+   356→  2847→                        <TableCell className="text-right hidden lg:table-cell">
+   357→  2848→                          <VolMultBadge mult={s.volMult} tag={s.vsaTag} />
+   358→  2849→                        </TableCell>
+   359→  2850→                      </>
+   360→  2851→                    )}
+   361→  2852→                    <TableCell className="text-center">
+   362→  2853→                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => { if (isInWatchlist?.(s.symbol)) removeFromWatchlist?.(s.symbol); else addToWatchlist?.(s); }} title={isInWatchlist?.(s.symbol) ? "Remove from watchlist" : "Add to watchlist"}>
+   363→  2854→                        <Star className={`h-4 w-4 ${isInWatchlist?.(s.symbol) ? "text-yellow-500 fill-yellow-400" : "text-muted-foreground"}`} />
+   364→  2855→                      </Button>
+   365→  2856→                    </TableCell>
+   366→  2857→                    {onAnalyze && (
+   367→  2858→                      <TableCell className="text-right">
+   368→  2859→                        <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] gap-1" onClick={() => onAnalyze(s.symbol)}>
+   369→  2860→                          <Search className="w-3 h-3" /> Analyze
+   370→  2861→                        </Button>
+   371→  2862→                      </TableCell>
+   372→  2863→                    )}
+   373→  2864→                  </TableRow>
+   374→  2865→                ))}
+   375→  2866→              </TableBody>
+   376→  2867→            </Table>
+   377→  2868→          </div>
+   378→  2869→          )}
+   379→  2870→        </CardContent>
+   380→  2871→      </Card>
+   381→  2872→
+   382→  2873→      {/* Position History — search a symbol to see its rank over time */}
+   383→  2874→      <ScreenHistoryCard
+   384→  2875→        history={screenHistory || []}
+   385→  2876→        searchSymbol={historySearchSymbol || ""}
+   386→  2877→        setSearchSymbol={setHistorySearchSymbol || (() => {})}
+   387→  2878→        currentScreenSymbols={screen?.top10?.map((s: any) => s.symbol) || []}
+   388→  2879→      />
+   389→  2880→
+   390→  2881→      {/* Watchlist — starred stocks, persisted in localStorage */}
+   391→  2882→      <WatchlistCard
+   392→  2883→        watchlist={watchlist || []}
+   393→  2884→        onAnalyze={onAnalyzeWatchlist}
+   394→  2885→        onRemove={removeFromWatchlist}
+   395→  2886→      />
+   396→  2887→
+   397→  2888→      {/* Telegram Alerts settings */}
+   398→  2889→      <TelegramSettingsCard
+   399→  2890→        config={telegramConfig || { botToken: "", chatId: "", enabled: false }}
+   400→  2891→        setConfig={setTelegramConfig}
+   401→  2892→        sendAlert={sendTelegramAlert}
+   402→  2893→      />
+   403→  2894→    </div>
+   404→  2895→  );
+   405→  2896→}
+   406→  2897→
+   407→  2898→/* ---------------------------------------------------------------- WatchlistCard */
+   408→  2899→function WatchlistCard({ watchlist, onAnalyze, onRemove }: {
+   409→  2900→  watchlist: any[];
+   410→  2901→  onAnalyze?: (symbol: string) => void;
+   411→  2902→  onRemove?: (symbol: string) => void;
+   412→  2903→}) {
+   413→  2904→  return (
+   414→  2905→    <Card className="card-pastel">
+   415→  2906→      <CardHeader className="pb-2">
+   416→  2907→        <CardTitle className="flex items-center gap-2 text-base">
+   417→  2908→          <Star className="w-4 h-4 text-yellow-500 fill-yellow-400" />
+   418→  2909→          ⭐ Watchlist
+   419→  2910→          <Badge variant="secondary" className="text-[10px] tabular-nums h-5">{watchlist.length}</Badge>
+   420→  2911→        </CardTitle>
+   421→  2912→        <CardDescription className="text-[10px]">
+   422→  2913→          Stocks you're tracking · saved in your browser · click the ⭐ next to any stock to add or remove it
+   423→  2914→        </CardDescription>
+   424→  2915→      </CardHeader>
+   425→  2916→      <CardContent className="pt-0">
+   426→  2917→        {watchlist.length === 0 ? (
+   427→  2918→          <div className="rounded-lg border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
+   428→  2919→            No stocks in watchlist. Click the star icon next to any stock to add it.
+   429→  2920→          </div>
+   430→  2921→        ) : (
+   431→  2922→          <div className="table-scroll-wrapper sticky-header-table max-h-96 overflow-y-auto">
+   432→  2923→            <Table>
+   433→  2924→              <TableHeader>
+   434→  2925→                <TableRow>
+   435→  2926→                  <TableHead className="text-[10px]">Symbol</TableHead>
+   436→  2927→                  <TableHead className="text-[10px]">Setup</TableHead>
+   437→  2928→                  <TableHead className="text-[10px] text-right">Signal</TableHead>
+   438→  2929→                  <TableHead className="text-[10px] text-right">Price</TableHead>
+   439→  2930→                  <TableHead className="text-[10px]">Added</TableHead>
+   440→  2931→                  <TableHead className="text-[10px] text-right">Actions</TableHead>
+   441→  2932→                </TableRow>
+   442→  2933→              </TableHeader>
+   443→  2934→              <TableBody>
+   444→  2935→                {watchlist.map((w) => (
+   445→  2936→                  <TableRow key={w.symbol}>
+   446→  2937→                    <TableCell className="font-semibold text-sm">{w.symbol}</TableCell>
+   447→  2938→                    <TableCell>
+   448→  2939→                      {w.setupType
+   449→  2940→                        ? <SetupBadge type={w.setupType as SetupType} />
+   450→  2941→                        : <span className="text-muted-foreground text-[10px]">—</span>}
+   451→  2942→                    </TableCell>
+   452→  2943→                    <TableCell className="text-right">
+   453→  2944→                      {typeof w.signalScore === "number"
+   454→  2945→                        ? <SignalScoreBadge score={w.signalScore} />
+   455→  2946→                        : <span className="text-muted-foreground text-[10px]">—</span>}
+   456→  2947→                    </TableCell>
+   457→  2948→                    <TableCell className="text-right tabular-nums text-sm">₹{fmt(w.price)}</TableCell>
+   458→  2949→                    <TableCell className="text-[10px] text-muted-foreground tabular-nums">{fmtISTDate(w.addedAt)}</TableCell>
+   459→  2950→                    <TableCell className="text-right">
+   460→  2951→                      <div className="inline-flex gap-1">
+   461→  2952→                        {onAnalyze && (
+   462→  2953→                          <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] gap-1" onClick={() => onAnalyze(w.symbol)} title="Analyze">
+   463→  2954→                            <Search className="w-3 h-3" /> 🔍
+   464→  2955→                          </Button>
+   465→  2956→                        )}
+   466→  2957→                        {onRemove && (
+   467→  2958→                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-red-600" onClick={() => onRemove(w.symbol)} title="Remove">
+   468→  2959→                            ✕
+   469→  2960→                          </Button>
+   470→  2961→                        )}
+   471→  2962→                      </div>
+   472→  2963→                    </TableCell>
+   473→  2964→                  </TableRow>
+   474→  2965→                ))}
+   475→  2966→              </TableBody>
+   476→  2967→            </Table>
+   477→  2968→          </div>
+   478→  2969→        )}
+   479→  2970→      </CardContent>
+   480→  2971→    </Card>
+   481→  2972→  );
+   482→  2973→}
+   483→  2974→
+   484→  2975→/* ---------------------------------------------------------------- TelegramSettingsCard */
+   485→  2976→function TelegramSettingsCard({ config, setConfig, sendAlert }: {
+   486→  2977→  config: { botToken: string; chatId: string; enabled: boolean };
+   487→  2978→  setConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void;
+   488→  2979→  sendAlert?: (message: string) => void;
+   489→  2980→}) {
+   490→  2981→  const [sending, setSending] = useState(false);
+   491→  2982→  const handleTest = async () => {
+   492→  2983→    if (!sendAlert) return;
+   493→  2984→    if (!config.botToken || !config.chatId) {
+   494→  2985→      toast({ title: "Missing config", description: "Enter your Bot Token and Chat ID first.", variant: "destructive" });
+   495→  2986→      return;
+   496→  2987→    }
+   497→  2988→    setSending(true);
+   498→  2989→    try {
+   499→  2990→      await sendAlert("✅ Test alert from Momentum Dashboard!");
+   500→  2991→      toast({ title: "Test alert sent", description: "Check your Telegram chat for the message." });
+   501→  2992→    } catch {
+   502→  2993→      toast({ title: "Failed to send", description: "Check your bot token and chat ID.", variant: "destructive" });
+   503→  2994→    } finally {
+   504→  2995→      setSending(false);
+   505→  2996→    }
+   506→  2997→  };
+   507→  2998→  return (
+   508→  2999→    <Card className="card-pastel">
+   509→  3000→      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+   510→  3001→        <div>
+   511→  3002→          <CardTitle className="flex items-center gap-2 text-base">
+   512→  3003→            <Send className="w-4 h-4 text-primary" />
+   513→  3004→            Telegram Alerts
+   514→  3005→          </CardTitle>
+   515→  3006→          <CardDescription className="text-[10px] mt-0.5">
+   516→  3007→            Get notified when new A+ signals appear · config saved in your browser
+   517→  3008→          </CardDescription>
+   518→  3009→        </div>
+   519→  3010→        {setConfig && (
+   520→  3011→          <Switch
+   521→  3012→            checked={config.enabled}
+   522→  3013→            onCheckedChange={(v) => setConfig({ ...config, enabled: v })}
+   523→  3014→            aria-label="Toggle Telegram alerts"
+   524→  3015→          />
+   525→  3016→        )}
+   526→  3017→      </CardHeader>
+   527→  3018→      <CardContent className="pt-0">
+   528→  3019→        {!config.enabled ? (
+   529→  3020→          <div className="text-xs text-muted-foreground p-3 rounded-lg border border-dashed border-border/60 text-center">
+   530→  3021→            {setConfig
+   531→  3022→              ? <>Enable the switch and <b>Configure</b> below to receive alerts.</>
+   532→  3023→              : "Telegram alerts are disabled."}
+   533→  3024→          </div>
+   534→  3025→        ) : (
+   535→  3026→          <div className="space-y-3">
+   536→  3027→            <div className="space-y-1.5">
+   537→  3028→              <Label className="text-[11px]">Bot Token</Label>
+   538→  3029→              <Input
+   539→  3030→                type="password"
+   540→  3031→                placeholder="123456789:ABCdef..."
+   541→  3032→                value={config.botToken}
+   542→  3033→                onChange={(e) => setConfig?.({ ...config, botToken: e.target.value })}
+   543→  3034→                className="text-xs font-mono"
+   544→  3035→                autoComplete="off"
+   545→  3036→              />
+   546→  3037→            </div>
+   547→  3038→            <div className="space-y-1.5">
+   548→  3039→              <Label className="text-[11px]">Chat ID</Label>
+   549→  3040→              <Input
+   550→  3041→                type="text"
+   551→  3042→                placeholder="your_chat_id"
+   552→  3043→                value={config.chatId}
+   553→  3044→                onChange={(e) => setConfig?.({ ...config, chatId: e.target.value })}
+   554→  3045→                className="text-xs font-mono"
+   555→  3046→                autoComplete="off"
+   556→  3047→              />
+   557→  3048→            </div>
+   558→  3049→            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-1">
+   559→  3050→              <p className="text-[10px] text-muted-foreground">
+   560→  3051→                Create a bot with <b>@BotFather</b>, then get your chat ID from <b>@userinfobot</b>
+   561→  3052→              </p>
+   562→  3053→              <Button size="sm" className="h-7 text-[11px] gap-1 shrink-0" onClick={handleTest} disabled={sending || !sendAlert}>
+   563→  3054→                <Send className="w-3 h-3" /> {sending ? "Sending…" : "Send Test Alert"}
+   564→  3055→              </Button>
+   565→  3056→            </div>
+   566→  3057→          </div>
+   567→  3058→        )}
+   568→  3059→      </CardContent>
+   569→  3060→    </Card>
+   570→  3061→  );
+   571→  3062→}
+   572→  3063→
+   573→  3064→/* ---------------------------------------------------------------- ScreenHistoryCard */
+   574→  3065→function ScreenHistoryCard({ history, searchSymbol, setSearchSymbol, currentScreenSymbols }: {
+   575→  3066→  history: any[];
+   576→  3067→  searchSymbol: string;
+   577→  3068→  setSearchSymbol: (v: string) => void;
+   578→  3069→  currentScreenSymbols: string[];
+   579→  3070→}) {
+   580→  3071→  const sym = searchSymbol.trim().toUpperCase();
+   581→  3072→  const hasHistory = history.length > 0;
+   582→  3073→
+   583→  3074→  const symbolHistory = sym ? history.map(snap => {
+   584→  3075→    const stock = snap.stocks.find((s: any) => s.symbol === sym);
+   585→  3076→    return {
+   586→  3077→      date: snap.date, mode: snap.mode,
+   587→  3078→      rank: stock?.rank ?? null, signalScore: stock?.signalScore ?? null,
+   588→  3079→      price: stock?.currentPrice ?? null, setupType: stock?.setupType ?? null,
+   589→  3080→      setupGrade: stock?.setupGrade ?? null, ret6mPct: stock?.ret6mPct ?? null,
+   590→  3081→      ret1wPct: stock?.ret1wPct ?? null, inList: !!stock,
+   591→  3082→    };
+   592→  3083→  }).reverse() : [];
+   593→  3084→
+   594→  3085→  const chartData = sym ? symbolHistory.slice().reverse().map(s => ({
+   595→  3086→    date: fmtISTDate(s.date), rank: s.rank ?? 0, signal: s.signalScore ?? 0, price: s.price ?? 0,
+   596→  3087→  })) : [];
+   597→  3088→
+   598→  3089→  const inListCount = symbolHistory.filter(s => s.inList).length;
+   599→  3090→  const bestRank = symbolHistory.filter(s => s.inList).reduce((min, s) => s.rank < min ? s.rank : min, 999);
+   600→  3091→  const avgRank = inListCount > 0 ? (symbolHistory.filter(s => s.inList).reduce((sum, s) => sum + s.rank, 0) / inListCount) : 0;
+   601→
+   602→[showing lines 2492-3091 of 4226; use offset=3092 with limit to continue reading]

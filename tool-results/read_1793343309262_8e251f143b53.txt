@@ -1,0 +1,602 @@
+  2492→/* ---------------------------------------------------------------- ScreenPanel */
+  2493→function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void }) {
+  2494→  if (running && (!screen || elapsedMs > 1000)) {
+  2495→    const elapsed = elapsedMs ? (elapsedMs / 1000).toFixed(1) : "0.0";
+  2496→    const isBridge = screenMode === "bridge";
+  2497→    const estTotal = isBridge ? 20 : 30; // bridge now takes ~17s (top 250 + 18mo), momentum ~30s
+  2498→    const pct = Math.min(95, (elapsedMs || 0) / (estTotal * 10));
+  2499→    return (
+  2500→      <Card className="card-pastel">
+  2501→        <CardContent className="p-8">
+  2502→          <div className="flex flex-col items-center justify-center text-center space-y-4">
+  2503→            <div className="relative">
+  2504→              <RefreshCw className="w-12 h-12 text-primary animate-spin" />
+  2505→            </div>
+  2506→            <div>
+  2507→              <h3 className="text-base font-semibold text-foreground">
+  2508→                {isBridge ? "Running Pullback Bridge Screener…" : "Fetching live market data…"}
+  2509→              </h3>
+  2510→              <p className="text-sm text-muted-foreground mt-1">
+  2511→                {isBridge
+  2512→                  ? "Downloading 18 months of data for top 250 NSE stocks (by market cap), computing Monthly RSI + Daily 20 EMA + Anchor Candle + 50% Retracement. Takes ~17 seconds."
+  2513→                  : "Downloading 18 months of OHLCV for ~350 NSE stocks, computing RSI/MA/returns, then fetching market cap + sector for qualifiers."}
+  2514→              </p>
+  2515→            </div>
+  2516→            <div className="w-full max-w-md space-y-2">
+  2517→              <Progress value={pct} className="h-2" />
+  2518→              <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+  2519→                <span>{elapsed}s elapsed</span>
+  2520→                <span>est. {isBridge ? "15-20s" : "25-30s"} total</span>
+  2521→              </div>
+  2522→            </div>
+  2523→            {isBridge && (
+  2524→              <div className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-md p-2 max-w-md">
+  2525→                Scanning top 250 stocks by market cap · 18 months of data for Monthly RSI
+  2526→              </div>
+  2527→            )}
+  2528→            <div className="grid grid-cols-3 gap-2 w-full max-w-md text-xs">
+  2529→              <div className="pastel-info rounded-md p-2 text-center">
+  2530→                <div className="font-bold tabular-nums">1</div>
+  2531→                <div className="text-[10px] opacity-80">{isBridge ? "Download 2Y" : "Download OHLCV"}</div>
+  2532→              </div>
+  2533→              <div className="pastel-warning rounded-md p-2 text-center">
+  2534→                <div className="font-bold tabular-nums">2</div>
+  2535→                <div className="text-[10px] opacity-80">{isBridge ? "Monthly RSI + EMAs" : "Compute indicators"}</div>
+  2536→              </div>
+  2537→              <div className="pastel-purple rounded-md p-2 text-center">
+  2538→                <div className="font-bold tabular-nums">3</div>
+  2539→                <div className="text-[10px] opacity-80">Fetch market cap</div>
+  2540→              </div>
+  2541→            </div>
+  2542→          </div>
+  2543→        </CardContent>
+  2544→      </Card>
+  2545→    );
+  2546→  }
+  2547→  if (!screen) {
+  2548→    const isBridge = screenMode === "bridge";
+  2549→    return (
+  2550→      <Card className="card-pastel">
+  2551→        <CardHeader>
+  2552→          <CardTitle className="flex items-center gap-2">
+  2553→            <TrendingUp className="w-5 h-5 text-primary" />
+  2554→            {isBridge ? "Pullback Bridge Screener — Not yet run" : "Momentum Screen — Not yet run"}
+  2555→          </CardTitle>
+  2556→          <CardDescription>
+  2557→            {isBridge
+  2558→              ? <>Click <b>Run Bridge</b> to find stocks with Monthly RSI 60–72, trend intact, and at least one entry tactic READY.</>
+  2559→              : <>Click <b>Run Screen</b> at the top to fetch live data for ~350 NSE stocks and apply the 6 momentum rules.</>
+  2560→            }
+  2561→          </CardDescription>
+  2562→        </CardHeader>
+  2563→        <CardContent>
+  2564→          <div className="rounded-lg border border-dashed border-slate-300 p-6 text-sm text-muted-foreground">
+  2565→            <p className="mb-2 font-medium text-foreground dark:text-muted-foreground/50">
+  2566→              {isBridge ? "Bridge screening rules:" : "Screening rules:"}
+  2567→            </p>
+  2568→            {isBridge ? (
+  2569→              <ul className="list-disc pl-5 space-y-1">
+  2570→                <li>Monthly RSI between 55–75 (macro filter — multi-month momentum active)</li>
+  2571→                <li>Price &gt; 50 DMA &gt; 200 DMA (trend intact)</li>
+  2572→                <li>At least one entry tactic READY or TRIGGERED:
+  2573→                  <ul className="list-circle pl-4 mt-1 text-xs">
+  2574→                    <li>Daily 20 EMA Touchdown</li>
+  2575→                    <li>Anchor Candle High Break</li>
+  2576→                    <li>50% Monthly Range Retracement</li>
+  2577→                  </ul>
+  2578→                </li>
+  2579→                <li>Market Cap &gt; ₹{filters.mcapMin} Cr</li>
+  2580→                <li><b>Sort</b>: Bridge Score DESC, top {topN}</li>
+  2581→                <li>Each stock comes with a <b>trailing stop-loss</b> (previous week's low)</li>
+  2582→              </ul>
+  2583→            ) : (
+  2584→              <ul className="list-disc pl-5 space-y-1">
+  2585→                <li>Current Price &gt; 200 DMA</li>
+  2586→                <li>Current Price &gt; 50 DMA</li>
+  2587→                <li>50 DMA &gt; 200 DMA</li>
+  2588→                <li>RSI(14) &gt; {filters.rsiMin}</li>
+  2589→                <li>Market Cap &gt; ₹{filters.mcapMin} Cr</li>
+  2590→                <li>30-day Avg Volume &gt; {filters.volMin.toLocaleString("en-IN")}</li>
+  2591→                <li><b>Sort</b>: Signal Score DESC, top {topN}</li>
+  2592→              </ul>
+  2593→            )}
+  2594→          </div>
+  2595→        </CardContent>
+  2596→      </Card>
+  2597→    );
+  2598→  }
+  2599→  return (
+  2600→    <div className="space-y-4">
+  2601→      {/* Error/warning banner — Yahoo rate-limited or showing stale/fallback data */}
+  2602→      {(screen.error || screen.warning) && (
+  2603→        <Card className={`card-pastel ${screen.error ? "border-red-300/60 bg-red-50/50" : "border-amber-300/60 bg-amber-50/50"}`}>
+  2604→          <CardContent className="p-4 flex items-start gap-3">
+  2605→            <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${screen.error ? "text-red-600" : "text-amber-600"}`} />
+  2606→            <div className="flex-1">
+  2607→              <p className={`text-sm font-medium ${screen.error ? "text-red-900" : "text-amber-900"}`}>
+  2608→                {screen.error
+  2609→                  ? "Yahoo Finance rate-limited"
+  2610→                  : screen.fallback
+  2611→                    ? "Showing fallback data"
+  2612→                    : screen.stale
+  2613→                      ? "Showing cached data"
+  2614→                      : "Notice"}
+  2615→              </p>
+  2616→              <p className={`text-xs mt-1 ${screen.error ? "text-red-700" : "text-amber-700"}`}>
+  2617→                {screen.error || screen.warning}
+  2618→              </p>
+  2619→              <p className={`text-xs mt-2 ${screen.error ? "text-red-600" : "text-amber-600"}`}>
+  2620→                {screen.error
+  2621→                  ? "The screen will auto-retry. You can also click \"Run Screen\" again in a minute."
+  2622→                  : "Data below is from an earlier successful fetch. Click \"Run Screen\" to try fetching fresh data."}
+  2623→              </p>
+  2624→            </div>
+  2625→          </CardContent>
+  2626→        </Card>
+  2627→      )}
+  2628→      {/* Stats */}
+  2629→      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+  2630→        <StatCard icon={<Activity className="w-4 h-4" />} label="Universe" value={String(screen.universeSize)} sub="NSE stocks" />
+  2631→        <StatCard icon={<TrendingUp className="w-4 h-4" />} label="With full data" value={String(screen.passedData)} sub="18-month OHLCV" />
+  2632→        <StatCard icon={<Gauge className="w-4 h-4" />} label="Pass technical" value={String(screen.passedTech)} sub="MA + RSI + Vol" />
+  2633→        <StatCard icon={<Wallet className="w-4 h-4" />} label="Pass market cap" value={String(screen.passedMc)} sub="> ₹500 Cr" tone="emerald" />
+  2634→      </div>
+  2635→
+  2636→      {/* Change History — shows when stocks were added/removed with dates */}
+  2637→      {changeHistory && changeHistory.length > 0 && (
+  2638→        <Card className="card-pastel">
+  2639→          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+  2640→            <div>
+  2641→              <CardTitle className="flex items-center gap-2 text-base">
+  2642→                <History className="w-4 h-4 text-primary" /> Change History
+  2643→              </CardTitle>
+  2644→              <CardDescription className="text-[10px] mt-0.5">
+  2645→                When stocks entered or left your Top {topN} · persisted across sessions
+  2646→              </CardDescription>
+  2647→            </div>
+  2648→            {onClearHistory && (
+  2649→              <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground" onClick={onClearHistory}>
+  2650→                Clear
+  2651→              </Button>
+  2652→            )}
+  2653→          </CardHeader>
+  2654→          <CardContent className="pt-0">
+  2655→            <div className="space-y-3 max-h-72 overflow-y-auto scroll-pastel">
+  2656→              {/* Show most recent first */}
+  2657→              {[...changeHistory].reverse().slice(0, 10).map((change, idx) => {
+  2658→                const date = new Date(change.date);
+  2659→                const dateStr = fmtISTDate(change.date);
+  2660→                const timeStr = fmtISTTime(change.date);
+  2661→                const isMostRecent = idx === 0;
+  2662→                return (
+  2663→                  <div key={change.date} className={`p-3 rounded-lg border ${isMostRecent ? "border-primary/30 bg-primary/5" : "border-border/40"}`}>
+  2664→                    <div className="flex items-center justify-between mb-2">
+  2665→                      <div className="flex items-center gap-2">
+  2666→                        <span className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded ${isMostRecent ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+  2667→                          {dateStr}
+  2668→                        </span>
+  2669→                        <span className="text-[10px] text-muted-foreground tabular-nums">{timeStr}</span>
+  2670→                        {isMostRecent && <span className="text-[9px] font-semibold text-primary uppercase tracking-wide">Latest</span>}
+  2671→                      </div>
+  2672→                      <span className="text-[10px] text-muted-foreground">
+  2673→                        {change.added.length > 0 || change.removed.length > 0
+  2674→                          ? `${change.added.length} added · ${change.removed.length} removed`
+  2675→                          : "No changes"}
+  2676→                      </span>
+  2677→                    </div>
+  2678→                    <div className="space-y-1.5">
+  2679→                      {change.added.length > 0 && (
+  2680→                        <div className="flex flex-wrap items-center gap-1">
+  2681→                          <span className="text-[9px] font-semibold text-emerald-600 mr-1">↑</span>
+  2682→                          {change.added.map((s) => (
+  2683→                            <span key={s.symbol} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium pastel-positive">
+  2684→                              {s.symbol}
+  2685→                              <span className="opacity-60">+{s.ret6mPct.toFixed(0)}%</span>
+  2686→                            </span>
+  2687→                          ))}
+  2688→                        </div>
+  2689→                      )}
+  2690→                      {change.removed.length > 0 && (
+  2691→                        <div className="flex flex-wrap items-center gap-1">
+  2692→                          <span className="text-[9px] font-semibold text-red-600 mr-1">↓</span>
+  2693→                          {change.removed.map((sym) => (
+  2694→                            <span key={sym} className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium pastel-negative line-through opacity-70">
+  2695→                              {sym}
+  2696→                            </span>
+  2697→                          ))}
+  2698→                        </div>
+  2699→                      )}
+  2700→                    </div>
+  2701→                  </div>
+  2702→                );
+  2703→              })}
+  2704→            </div>
+  2705→          </CardContent>
+  2706→        </Card>
+  2707→      )}
+  2708→
+  2709→      {/* Trade Plan card — top 5 setups (momentum mode only; bridge has its own table) */}
+  2710→      {screen.top10.length > 0 && onAnalyze && screenMode !== "bridge" && (
+  2711→        <TradePlanCard stocks={screen.top10.slice(0, 5)} regime={regime ?? null} rrOverride={rrOverride ?? null} setRrOverride={setRrOverride ?? null} />
+  2712→      )}
+  2713→
+  2714→      {/* Bridge mode — Trade Plan cards with trailing SL */}
+  2715→      {screen.top10.length > 0 && screenMode === "bridge" && (
+  2716→        <BridgeTradePlanCard stocks={screen.top10.slice(0, 5)} regime={regime ?? null} />
+  2717→      )}
+  2718→
+  2719→      {/* Top 10 table */}
+  2720→      <Card className="card-pastel">
+  2721→        <CardHeader>
+  2722→          <CardTitle>{screenMode === "bridge" ? `Top ${screen.top10.length} Pullback Bridge Stocks` : `Top ${screen.top10.length} Momentum Stocks`}</CardTitle>
+  2723→          <CardDescription>
+  2724→            {screenMode === "bridge"
+  2725→              ? <>Ranked by Bridge Score · Monthly RSI 55–75 · Entry tactics READY · Trailing SL = prev week low · as of {fmtISTDateTime(screen.runAt)}</>
+  2726→              : <>Ranked by composite Signal Score (0-100) · Screen took {(screen.elapsedMs / 1000).toFixed(1)}s · as of {fmtISTDateTime(screen.runAt)}</>
+  2727→            }
+  2728→          </CardDescription>
+  2729→        </CardHeader>
+  2730→        <CardContent>
+  2731→          {screen.top10.length === 0 ? (
+  2732→            <div className="p-6 text-center space-y-3">
+  2733→              <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
+  2734→              <div>
+  2735→                <p className="text-sm font-medium text-foreground">No stocks passed the filters</p>
+  2736→                <p className="text-xs text-muted-foreground mt-1">
+  2737→                  This is usually because Yahoo Finance rate-limited the market cap lookup. Try again in 30 seconds.
+  2738→                </p>
+  2739→              </div>
+  2740→              <p className="text-xs text-muted-foreground">
+  2741→                {screen.passedTech} stocks passed technical filters but market cap data couldn't be fetched for all of them.
+  2742→              </p>
+  2743→            </div>
+  2744→          ) : (
+  2745→          <div className="table-scroll-wrapper sticky-header-table">
+  2746→            <Table>
+  2747→              <TableHeader>
+  2748→                <TableRow>
+  2749→                  <TableHead className="w-12">#</TableHead>
+  2750→                  <TableHead>Symbol</TableHead>
+  2751→                  {screenMode === "bridge" ? (
+  2752→                    <>
+  2753→                      <TableHead className="text-right">Monthly RSI</TableHead>
+  2754→                      <TableHead className="text-right">Bridge</TableHead>
+  2755→                      <TableHead>Active Tactic</TableHead>
+  2756→                      <TableHead className="text-right">Entry</TableHead>
+  2757→                      <TableHead className="text-right">Trailing SL</TableHead>
+  2758→                      <TableHead className="text-right">Risk%</TableHead>
+  2759→                      <TableHead className="text-center hidden lg:table-cell">Trend</TableHead>
+  2760→                      <TableHead className="text-right">1W %</TableHead>
+  2761→                      <TableHead className="text-right hidden sm:table-cell">1M %</TableHead>
+  2762→                      <TableHead className="text-right hidden sm:table-cell">6M %</TableHead>
+  2763→                      <TableHead className="text-right hidden md:table-cell">Price</TableHead>
+  2764→                    </>
+  2765→                  ) : (
+  2766→                    <>
+  2767→                      <TableHead className="hidden md:table-cell">Sector</TableHead>
+  2768→                      <TableHead className="text-right">Price (₹)</TableHead>
+  2769→                      <TableHead className="text-right">RSI</TableHead>
+  2770→                      <TableHead className="text-right hidden sm:table-cell">MCap (₹Cr)</TableHead>
+  2771→                      <TableHead className="text-right">1W %</TableHead>
+  2772→                      <TableHead className="text-right">1M %</TableHead>
+  2773→                      <TableHead className="text-right hidden sm:table-cell">3M %</TableHead>
+  2774→                      <TableHead className="text-right hidden md:table-cell">6M %</TableHead>
+  2775→                      <TableHead className="text-right hidden lg:table-cell">Sharpe</TableHead>
+  2776→                      <TableHead>Setup</TableHead>
+  2777→                      <TableHead className="text-right">Signal</TableHead>
+  2778→                      <TableHead className="text-center hidden lg:table-cell">Trend</TableHead>
+  2779→                      <TableHead className="text-right hidden md:table-cell">Stop (₹)</TableHead>
+  2780→                      <TableHead className="text-right hidden md:table-cell">R:R</TableHead>
+  2781→                      <TableHead className="text-right hidden lg:table-cell">Vol</TableHead>
+  2782→                    </>
+  2783→                  )}
+  2784→                  <TableHead className="w-10 text-center"><Star className="w-3 h-3 inline text-muted-foreground" /></TableHead>
+  2785→                  {onAnalyze && <TableHead className="text-right">Analyze</TableHead>}
+  2786→                </TableRow>
+  2787→              </TableHeader>
+  2788→              <TableBody>
+  2789→                {screen.top10.map((s: any) => (
+  2790→                  <TableRow key={s.symbol}>
+  2791→                    <TableCell className="font-bold text-muted-foreground/70">{s.rank}</TableCell>
+  2792→                    <TableCell>
+  2793→                      <div className="font-semibold">{s.symbol}</div>
+  2794→                      <div className="text-xs text-muted-foreground line-clamp-1 max-w-[160px]">{s.longName}</div>
+  2795→                    </TableCell>
+  2796→                    {screenMode === "bridge" ? (
+  2797→                      <>
+  2798→                        <TableCell className="text-right">
+  2799→                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums ${s.macroFilterPass ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"}`}>
+  2800→                            {s.monthlyRsi?.toFixed(1)}
+  2801→                          </span>
+  2802→                        </TableCell>
+  2803→                        <TableCell className="text-right">
+  2804→                          <SignalScoreBadge score={s.bridgeScore ?? 0} />
+  2805→                        </TableCell>
+  2806→                        <TableCell>
+  2807→                          <div className="text-[10px] font-semibold leading-tight">{s.activeTactic}</div>
+  2808→                          <div className="text-[9px] text-muted-foreground">{s.activeTacticId === "anchor_break" ? "Momentum" : s.activeTacticId === "ema_touchdown" ? "Safest" : "Value"}</div>
+  2809→                        </TableCell>
+  2810→                        <TableCell className="text-right tabular-nums text-emerald-600 font-semibold">₹{fmt(s.entryPrice)}</TableCell>
+  2811→                        <TableCell className="text-right tabular-nums text-red-600 font-semibold">₹{fmt(s.trailingSL)}</TableCell>
+  2812→                        <TableCell className="text-right">
+  2813→                          <span className={`text-[10px] font-bold tabular-nums ${s.riskPct < 5 ? "text-emerald-600" : s.riskPct < 8 ? "text-amber-600" : "text-red-600"}`}>
+  2814→                            {s.riskPct?.toFixed(1)}%
+  2815→                          </span>
+  2816→                        </TableCell>
+  2817→                        <TableCell className="text-center hidden lg:table-cell">
+  2818→                          <Sparkline prices={sparklineData?.[s.symbol] || []} width={50} height={18} />
+  2819→                        </TableCell>
+  2820→                        <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1wPct} /></TableCell>
+  2821→                        <TableCell className="text-right tabular-nums hidden sm:table-cell"><ReturnCell pct={s.ret1mPct} /></TableCell>
+  2822→                        <TableCell className="text-right tabular-nums hidden sm:table-cell font-semibold"><ReturnCell pct={s.ret6mPct} /></TableCell>
+  2823→                        <TableCell className="text-right tabular-nums hidden md:table-cell">₹{fmt(s.currentPrice)}</TableCell>
+  2824→                      </>
+  2825→                    ) : (
+  2826→                      <>
+  2827→                        <TableCell className="hidden md:table-cell text-muted-foreground">{s.sector}</TableCell>
+  2828→                        <TableCell className="text-right tabular-nums">{fmt(s.currentPrice)}</TableCell>
+  2829→                        <TableCell className="text-right">
+  2830→                          <RsiBadge rsi={s.rsi14} />
+  2831→                        </TableCell>
+  2832→                        <TableCell className="text-right hidden sm:table-cell tabular-nums">{fmt(s.marketCapCr, 0)}</TableCell>
+  2833→                        <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1wPct} /></TableCell>
+  2834→                        <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1mPct} /></TableCell>
+  2835→                        <TableCell className="text-right hidden sm:table-cell tabular-nums"><ReturnCell pct={s.ret3mPct} /></TableCell>
+  2836→                        <TableCell className="text-right hidden md:table-cell tabular-nums font-semibold"><ReturnCell pct={s.ret6mPct} /></TableCell>
+  2837→                        <TableCell className="text-right hidden lg:table-cell tabular-nums">{fmt(s.sharpe)}</TableCell>
+  2838→                        <TableCell><SetupBadge type={s.setupType} grade={s.setupGrade} /></TableCell>
+  2839→                        <TableCell className="text-right"><SignalScoreBadge score={s.signalScore} /></TableCell>
+  2840→                        <TableCell className="text-center hidden lg:table-cell">
+  2841→                          <Sparkline prices={sparklineData?.[s.symbol] || []} width={50} height={18} />
+  2842→                        </TableCell>
+  2843→                        <TableCell className="text-right hidden md:table-cell tabular-nums text-red-600 font-semibold">₹{fmt(s.stopPrice)}</TableCell>
+  2844→                        <TableCell className="text-right hidden md:table-cell tabular-nums">
+  2845→                          <span className="text-[10px] font-semibold">{getRRForSetup(s.setupType, rrOverride ?? null).t2.toFixed(1)}:1</span>
+  2846→                        </TableCell>
+  2847→                        <TableCell className="text-right hidden lg:table-cell">
+  2848→                          <VolMultBadge mult={s.volMult} tag={s.vsaTag} />
+  2849→                        </TableCell>
+  2850→                      </>
+  2851→                    )}
+  2852→                    <TableCell className="text-center">
+  2853→                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => { if (isInWatchlist?.(s.symbol)) removeFromWatchlist?.(s.symbol); else addToWatchlist?.(s); }} title={isInWatchlist?.(s.symbol) ? "Remove from watchlist" : "Add to watchlist"}>
+  2854→                        <Star className={`h-4 w-4 ${isInWatchlist?.(s.symbol) ? "text-yellow-500 fill-yellow-400" : "text-muted-foreground"}`} />
+  2855→                      </Button>
+  2856→                    </TableCell>
+  2857→                    {onAnalyze && (
+  2858→                      <TableCell className="text-right">
+  2859→                        <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] gap-1" onClick={() => onAnalyze(s.symbol)}>
+  2860→                          <Search className="w-3 h-3" /> Analyze
+  2861→                        </Button>
+  2862→                      </TableCell>
+  2863→                    )}
+  2864→                  </TableRow>
+  2865→                ))}
+  2866→              </TableBody>
+  2867→            </Table>
+  2868→          </div>
+  2869→          )}
+  2870→        </CardContent>
+  2871→      </Card>
+  2872→
+  2873→      {/* Position History — search a symbol to see its rank over time */}
+  2874→      <ScreenHistoryCard
+  2875→        history={screenHistory || []}
+  2876→        searchSymbol={historySearchSymbol || ""}
+  2877→        setSearchSymbol={setHistorySearchSymbol || (() => {})}
+  2878→        currentScreenSymbols={screen?.top10?.map((s: any) => s.symbol) || []}
+  2879→      />
+  2880→
+  2881→      {/* Watchlist — starred stocks, persisted in localStorage */}
+  2882→      <WatchlistCard
+  2883→        watchlist={watchlist || []}
+  2884→        onAnalyze={onAnalyzeWatchlist}
+  2885→        onRemove={removeFromWatchlist}
+  2886→      />
+  2887→
+  2888→      {/* Telegram Alerts settings */}
+  2889→      <TelegramSettingsCard
+  2890→        config={telegramConfig || { botToken: "", chatId: "", enabled: false }}
+  2891→        setConfig={setTelegramConfig}
+  2892→        sendAlert={sendTelegramAlert}
+  2893→      />
+  2894→    </div>
+  2895→  );
+  2896→}
+  2897→
+  2898→/* ---------------------------------------------------------------- WatchlistCard */
+  2899→function WatchlistCard({ watchlist, onAnalyze, onRemove }: {
+  2900→  watchlist: any[];
+  2901→  onAnalyze?: (symbol: string) => void;
+  2902→  onRemove?: (symbol: string) => void;
+  2903→}) {
+  2904→  return (
+  2905→    <Card className="card-pastel">
+  2906→      <CardHeader className="pb-2">
+  2907→        <CardTitle className="flex items-center gap-2 text-base">
+  2908→          <Star className="w-4 h-4 text-yellow-500 fill-yellow-400" />
+  2909→          ⭐ Watchlist
+  2910→          <Badge variant="secondary" className="text-[10px] tabular-nums h-5">{watchlist.length}</Badge>
+  2911→        </CardTitle>
+  2912→        <CardDescription className="text-[10px]">
+  2913→          Stocks you're tracking · saved in your browser · click the ⭐ next to any stock to add or remove it
+  2914→        </CardDescription>
+  2915→      </CardHeader>
+  2916→      <CardContent className="pt-0">
+  2917→        {watchlist.length === 0 ? (
+  2918→          <div className="rounded-lg border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
+  2919→            No stocks in watchlist. Click the star icon next to any stock to add it.
+  2920→          </div>
+  2921→        ) : (
+  2922→          <div className="table-scroll-wrapper sticky-header-table max-h-96 overflow-y-auto">
+  2923→            <Table>
+  2924→              <TableHeader>
+  2925→                <TableRow>
+  2926→                  <TableHead className="text-[10px]">Symbol</TableHead>
+  2927→                  <TableHead className="text-[10px]">Setup</TableHead>
+  2928→                  <TableHead className="text-[10px] text-right">Signal</TableHead>
+  2929→                  <TableHead className="text-[10px] text-right">Price</TableHead>
+  2930→                  <TableHead className="text-[10px]">Added</TableHead>
+  2931→                  <TableHead className="text-[10px] text-right">Actions</TableHead>
+  2932→                </TableRow>
+  2933→              </TableHeader>
+  2934→              <TableBody>
+  2935→                {watchlist.map((w) => (
+  2936→                  <TableRow key={w.symbol}>
+  2937→                    <TableCell className="font-semibold text-sm">{w.symbol}</TableCell>
+  2938→                    <TableCell>
+  2939→                      {w.setupType
+  2940→                        ? <SetupBadge type={w.setupType as SetupType} />
+  2941→                        : <span className="text-muted-foreground text-[10px]">—</span>}
+  2942→                    </TableCell>
+  2943→                    <TableCell className="text-right">
+  2944→                      {typeof w.signalScore === "number"
+  2945→                        ? <SignalScoreBadge score={w.signalScore} />
+  2946→                        : <span className="text-muted-foreground text-[10px]">—</span>}
+  2947→                    </TableCell>
+  2948→                    <TableCell className="text-right tabular-nums text-sm">₹{fmt(w.price)}</TableCell>
+  2949→                    <TableCell className="text-[10px] text-muted-foreground tabular-nums">{fmtISTDate(w.addedAt)}</TableCell>
+  2950→                    <TableCell className="text-right">
+  2951→                      <div className="inline-flex gap-1">
+  2952→                        {onAnalyze && (
+  2953→                          <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] gap-1" onClick={() => onAnalyze(w.symbol)} title="Analyze">
+  2954→                            <Search className="w-3 h-3" /> 🔍
+  2955→                          </Button>
+  2956→                        )}
+  2957→                        {onRemove && (
+  2958→                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-red-600" onClick={() => onRemove(w.symbol)} title="Remove">
+  2959→                            ✕
+  2960→                          </Button>
+  2961→                        )}
+  2962→                      </div>
+  2963→                    </TableCell>
+  2964→                  </TableRow>
+  2965→                ))}
+  2966→              </TableBody>
+  2967→            </Table>
+  2968→          </div>
+  2969→        )}
+  2970→      </CardContent>
+  2971→    </Card>
+  2972→  );
+  2973→}
+  2974→
+  2975→/* ---------------------------------------------------------------- TelegramSettingsCard */
+  2976→function TelegramSettingsCard({ config, setConfig, sendAlert }: {
+  2977→  config: { botToken: string; chatId: string; enabled: boolean };
+  2978→  setConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void;
+  2979→  sendAlert?: (message: string) => void;
+  2980→}) {
+  2981→  const [sending, setSending] = useState(false);
+  2982→  const handleTest = async () => {
+  2983→    if (!sendAlert) return;
+  2984→    if (!config.botToken || !config.chatId) {
+  2985→      toast({ title: "Missing config", description: "Enter your Bot Token and Chat ID first.", variant: "destructive" });
+  2986→      return;
+  2987→    }
+  2988→    setSending(true);
+  2989→    try {
+  2990→      await sendAlert("✅ Test alert from Momentum Dashboard!");
+  2991→      toast({ title: "Test alert sent", description: "Check your Telegram chat for the message." });
+  2992→    } catch {
+  2993→      toast({ title: "Failed to send", description: "Check your bot token and chat ID.", variant: "destructive" });
+  2994→    } finally {
+  2995→      setSending(false);
+  2996→    }
+  2997→  };
+  2998→  return (
+  2999→    <Card className="card-pastel">
+  3000→      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+  3001→        <div>
+  3002→          <CardTitle className="flex items-center gap-2 text-base">
+  3003→            <Send className="w-4 h-4 text-primary" />
+  3004→            Telegram Alerts
+  3005→          </CardTitle>
+  3006→          <CardDescription className="text-[10px] mt-0.5">
+  3007→            Get notified when new A+ signals appear · config saved in your browser
+  3008→          </CardDescription>
+  3009→        </div>
+  3010→        {setConfig && (
+  3011→          <Switch
+  3012→            checked={config.enabled}
+  3013→            onCheckedChange={(v) => setConfig({ ...config, enabled: v })}
+  3014→            aria-label="Toggle Telegram alerts"
+  3015→          />
+  3016→        )}
+  3017→      </CardHeader>
+  3018→      <CardContent className="pt-0">
+  3019→        {!config.enabled ? (
+  3020→          <div className="text-xs text-muted-foreground p-3 rounded-lg border border-dashed border-border/60 text-center">
+  3021→            {setConfig
+  3022→              ? <>Enable the switch and <b>Configure</b> below to receive alerts.</>
+  3023→              : "Telegram alerts are disabled."}
+  3024→          </div>
+  3025→        ) : (
+  3026→          <div className="space-y-3">
+  3027→            <div className="space-y-1.5">
+  3028→              <Label className="text-[11px]">Bot Token</Label>
+  3029→              <Input
+  3030→                type="password"
+  3031→                placeholder="123456789:ABCdef..."
+  3032→                value={config.botToken}
+  3033→                onChange={(e) => setConfig?.({ ...config, botToken: e.target.value })}
+  3034→                className="text-xs font-mono"
+  3035→                autoComplete="off"
+  3036→              />
+  3037→            </div>
+  3038→            <div className="space-y-1.5">
+  3039→              <Label className="text-[11px]">Chat ID</Label>
+  3040→              <Input
+  3041→                type="text"
+  3042→                placeholder="your_chat_id"
+  3043→                value={config.chatId}
+  3044→                onChange={(e) => setConfig?.({ ...config, chatId: e.target.value })}
+  3045→                className="text-xs font-mono"
+  3046→                autoComplete="off"
+  3047→              />
+  3048→            </div>
+  3049→            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-1">
+  3050→              <p className="text-[10px] text-muted-foreground">
+  3051→                Create a bot with <b>@BotFather</b>, then get your chat ID from <b>@userinfobot</b>
+  3052→              </p>
+  3053→              <Button size="sm" className="h-7 text-[11px] gap-1 shrink-0" onClick={handleTest} disabled={sending || !sendAlert}>
+  3054→                <Send className="w-3 h-3" /> {sending ? "Sending…" : "Send Test Alert"}
+  3055→              </Button>
+  3056→            </div>
+  3057→          </div>
+  3058→        )}
+  3059→      </CardContent>
+  3060→    </Card>
+  3061→  );
+  3062→}
+  3063→
+  3064→/* ---------------------------------------------------------------- ScreenHistoryCard */
+  3065→function ScreenHistoryCard({ history, searchSymbol, setSearchSymbol, currentScreenSymbols }: {
+  3066→  history: any[];
+  3067→  searchSymbol: string;
+  3068→  setSearchSymbol: (v: string) => void;
+  3069→  currentScreenSymbols: string[];
+  3070→}) {
+  3071→  const sym = searchSymbol.trim().toUpperCase();
+  3072→  const hasHistory = history.length > 0;
+  3073→
+  3074→  const symbolHistory = sym ? history.map(snap => {
+  3075→    const stock = snap.stocks.find((s: any) => s.symbol === sym);
+  3076→    return {
+  3077→      date: snap.date, mode: snap.mode,
+  3078→      rank: stock?.rank ?? null, signalScore: stock?.signalScore ?? null,
+  3079→      price: stock?.currentPrice ?? null, setupType: stock?.setupType ?? null,
+  3080→      setupGrade: stock?.setupGrade ?? null, ret6mPct: stock?.ret6mPct ?? null,
+  3081→      ret1wPct: stock?.ret1wPct ?? null, inList: !!stock,
+  3082→    };
+  3083→  }).reverse() : [];
+  3084→
+  3085→  const chartData = sym ? symbolHistory.slice().reverse().map(s => ({
+  3086→    date: fmtISTDate(s.date), rank: s.rank ?? 0, signal: s.signalScore ?? 0, price: s.price ?? 0,
+  3087→  })) : [];
+  3088→
+  3089→  const inListCount = symbolHistory.filter(s => s.inList).length;
+  3090→  const bestRank = symbolHistory.filter(s => s.inList).reduce((min, s) => s.rank < min ? s.rank : min, 999);
+  3091→  const avgRank = inListCount > 0 ? (symbolHistory.filter(s => s.inList).reduce((sum, s) => sum + s.rank, 0) / inListCount) : 0;
+
+[showing lines 2492-3091 of 4226; use offset=3092 with limit to continue reading]
