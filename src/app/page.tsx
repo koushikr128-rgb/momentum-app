@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -713,6 +713,41 @@ export default function Home() {
       });
     }
   }, [screen?.runAt, screenMode]);
+
+  // ===== Signal Score Smoothing + Stability + Consensus =====
+  const stabilityData = useMemo(() => {
+    if (!screen?.top10 || screenHistory.length === 0) return {};
+    const recent = screenHistory.slice(-3);
+    const result: Record<string, { smoothedScore: number; stability: string; consensus: boolean; appearances: number; prevRanks: number[] }> = {};
+    for (const stock of screen.top10) {
+      const sym = stock.symbol;
+      const scores: number[] = [];
+      const ranks: number[] = [];
+      let appearances = 0;
+      for (const snap of recent) {
+        const found = snap.stocks.find((s: any) => s.symbol === sym);
+        if (found) { scores.push(found.signalScore); ranks.push(found.rank); appearances++; }
+      }
+      let smoothedScore = stock.signalScore ?? 0;
+      if (scores.length >= 2) {
+        const weights = [0.5, 0.3, 0.2].slice(0, scores.length);
+        const weightSum = weights.reduce((a, b) => a + b, 0);
+        smoothedScore = Math.round(scores.reduce((sum, s, i) => sum + s * weights[i], 0) / weightSum);
+      }
+      let stability = "NEW";
+      if (ranks.length >= 2) {
+        const rankChanges = ranks.slice(1).map((r, i) => Math.abs(r - ranks[i]));
+        const maxChange = Math.max(...rankChanges);
+        if (maxChange <= 2) stability = "STABLE";
+        else if (maxChange <= 5) stability = "VOLATILE";
+        else stability = "ERRATIC";
+      }
+      const consensus = appearances >= 2;
+      result[sym] = { smoothedScore, stability, consensus, appearances, prevRanks: ranks };
+    }
+    return result;
+  }, [screen?.runAt, screenHistory]);
+
   useEffect(() => { try { localStorage.setItem("nifty_held_stocks", JSON.stringify(heldStocks)); } catch {} }, [heldStocks]);
   useEffect(() => { try { localStorage.setItem("nifty_change_history", JSON.stringify(changeHistory.slice(-20))); } catch {} }, [changeHistory]);
 
@@ -1335,7 +1370,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full mt-3">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} watchlist={watchlist} addToWatchlist={addToWatchlist} removeFromWatchlist={removeFromWatchlist} isInWatchlist={isInWatchlist} onAnalyzeWatchlist={(sym) => { setTab("analyze"); runAnalyze(sym); }} telegramConfig={telegramConfig} setTelegramConfig={setTelegramConfig} sendTelegramAlert={sendTelegramAlert} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} watchlist={watchlist} addToWatchlist={addToWatchlist} removeFromWatchlist={removeFromWatchlist} isInWatchlist={isInWatchlist} onAnalyzeWatchlist={(sym) => { setTab("analyze"); runAnalyze(sym); }} telegramConfig={telegramConfig} setTelegramConfig={setTelegramConfig} sendTelegramAlert={sendTelegramAlert} stabilityData={stabilityData} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -2434,8 +2469,64 @@ function BridgeTradePlanCard({ stocks, regime }: { stocks: any[]; regime: Regime
   );
 }
 
+/* ---------------------------------------------------------------- StabilityBadge */
+function StabilityBadge({ stability, smoothedScore }: { stability: string; smoothedScore?: number }) {
+  const styles: Record<string, string> = {
+    STABLE: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
+    VOLATILE: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
+    ERRATIC: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
+    NEW: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  };
+  return (
+    <div className="flex flex-col items-center">
+      <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold ${styles[stability] || styles.NEW}`}>
+        {stability}
+      </span>
+      {smoothedScore !== undefined && (
+        <span className="text-[9px] text-muted-foreground tabular-nums">SM: {smoothedScore.toFixed(0)}</span>
+      )}
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void }) {
+function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert, stabilityData }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void; stabilityData?: Record<string, any> }) {
+  // Column sort state
+  const [sortCol, setSortCol] = useState<string>("");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const toggleSort = (col: string) => {
+    if (sortCol === col) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortCol(col);
+      setSortDir("desc");
+    }
+  };
+
+  const getSortedStocks = () => {
+    if (!screen?.top10) return [];
+    if (!sortCol) return screen.top10;
+    const sorted = [...screen.top10].sort((a: any, b: any) => {
+      let va = a[sortCol] ?? 0;
+      let vb = b[sortCol] ?? 0;
+      // Handle stabilityData fields
+      if (sortCol === "smoothed") {
+        va = stabilityData?.[a.symbol]?.smoothedScore ?? a.signalScore ?? 0;
+        vb = stabilityData?.[b.symbol]?.smoothedScore ?? b.signalScore ?? 0;
+      }
+      if (typeof va === "string") va = va.localeCompare(vb as string);
+      if (typeof vb === "string") return sortDir === "asc" ? (va as string).localeCompare(vb as string) : (vb as string).localeCompare(va as string);
+      return sortDir === "asc" ? (va as number) - (vb as number) : (vb as number) - (va as number);
+    });
+    return sorted;
+  };
+
+  const sortedStocks = getSortedStocks();
+  const SortIcon = ({ col }: { col: string }) => {
+    if (sortCol !== col) return <span className="text-muted-foreground/30 cursor-pointer hover:text-muted-foreground ml-0.5">↕</span>;
+    return <span className="text-primary cursor-pointer ml-0.5">{sortDir === "asc" ? "↑" : "↓"}</span>;
+  };
   if (running && (!screen || elapsedMs > 1000)) {
     const elapsed = elapsedMs ? (elapsedMs / 1000).toFixed(1) : "0.0";
     const isBridge = screenMode === "bridge";
@@ -2695,35 +2786,37 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                   <TableHead>Symbol</TableHead>
                   {screenMode === "bridge" ? (
                     <>
-                      <TableHead className="text-right">Monthly RSI</TableHead>
-                      <TableHead className="text-right">Bridge</TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("monthlyRsi")}>Monthly RSI <SortIcon col="monthlyRsi" /></TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("bridgeScore")}>Bridge <SortIcon col="bridgeScore" /></TableHead>
                       <TableHead>Active Tactic</TableHead>
-                      <TableHead className="text-right">Entry</TableHead>
-                      <TableHead className="text-right">Trailing SL</TableHead>
-                      <TableHead className="text-right">Risk%</TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("entryPrice")}>Entry <SortIcon col="entryPrice" /></TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("trailingSL")}>Trailing SL <SortIcon col="trailingSL" /></TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("riskPct")}>Risk% <SortIcon col="riskPct" /></TableHead>
                       <TableHead className="text-center hidden lg:table-cell">Trend</TableHead>
-                      <TableHead className="text-right">1W %</TableHead>
-                      <TableHead className="text-right hidden sm:table-cell">1M %</TableHead>
-                      <TableHead className="text-right hidden sm:table-cell">6M %</TableHead>
-                      <TableHead className="text-right hidden md:table-cell">Price</TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("ret1wPct")}>1W % <SortIcon col="ret1wPct" /></TableHead>
+                      <TableHead className="text-right hidden sm:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("ret1mPct")}>1M % <SortIcon col="ret1mPct" /></TableHead>
+                      <TableHead className="text-right hidden sm:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("ret6mPct")}>6M % <SortIcon col="ret6mPct" /></TableHead>
+                      <TableHead className="text-right hidden md:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("currentPrice")}>Price <SortIcon col="currentPrice" /></TableHead>
                     </>
                   ) : (
                     <>
                       <TableHead className="hidden md:table-cell">Sector</TableHead>
-                      <TableHead className="text-right">Price (₹)</TableHead>
-                      <TableHead className="text-right">RSI</TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("currentPrice")}>Price (₹) <SortIcon col="currentPrice" /></TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("rsi14")}>RSI <SortIcon col="rsi14" /></TableHead>
                       <TableHead className="text-right hidden sm:table-cell">MCap (₹Cr)</TableHead>
-                      <TableHead className="text-right">1W %</TableHead>
-                      <TableHead className="text-right">1M %</TableHead>
-                      <TableHead className="text-right hidden sm:table-cell">3M %</TableHead>
-                      <TableHead className="text-right hidden md:table-cell">6M %</TableHead>
-                      <TableHead className="text-right hidden lg:table-cell">Sharpe</TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("ret1wPct")}>1W % <SortIcon col="ret1wPct" /></TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("ret1mPct")}>1M % <SortIcon col="ret1mPct" /></TableHead>
+                      <TableHead className="text-right hidden sm:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("ret3mPct")}>3M % <SortIcon col="ret3mPct" /></TableHead>
+                      <TableHead className="text-right hidden md:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("ret6mPct")}>6M % <SortIcon col="ret6mPct" /></TableHead>
+                      <TableHead className="text-right hidden lg:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("sharpe")}>Sharpe <SortIcon col="sharpe" /></TableHead>
                       <TableHead>Setup</TableHead>
-                      <TableHead className="text-right">Signal</TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("signalScore")}>Signal <SortIcon col="signalScore" /></TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("smoothed")}>Smooth <SortIcon col="smoothed" /></TableHead>
+                      <TableHead className="text-center">Stability</TableHead>
                       <TableHead className="text-center hidden lg:table-cell">Trend</TableHead>
-                      <TableHead className="text-right hidden md:table-cell">Stop (₹)</TableHead>
-                      <TableHead className="text-right hidden md:table-cell">R:R</TableHead>
-                      <TableHead className="text-right hidden lg:table-cell">Vol</TableHead>
+                      <TableHead className="text-right hidden md:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("stopPrice")}>Stop (₹) <SortIcon col="stopPrice" /></TableHead>
+                      <TableHead className="text-right hidden md:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("riskReward")}>R:R <SortIcon col="riskReward" /></TableHead>
+                      <TableHead className="text-right hidden lg:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("volMult")}>Vol <SortIcon col="volMult" /></TableHead>
                     </>
                   )}
                   <TableHead className="w-10 text-center"><Star className="w-3 h-3 inline text-muted-foreground" /></TableHead>
@@ -2731,12 +2824,15 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {screen.top10.map((s: any) => (
+                {sortedStocks.map((s: any) => (
                   <TableRow key={s.symbol}>
                     <TableCell className="font-bold text-muted-foreground/70">{s.rank}</TableCell>
                     <TableCell>
                       <div className="font-semibold">{s.symbol}</div>
                       <div className="text-xs text-muted-foreground line-clamp-1 max-w-[160px]">{s.longName}</div>
+                      {screenMode !== "bridge" && (!stabilityData?.[s.symbol] || !stabilityData[s.symbol]?.consensus) && (
+                        <span className="text-[8px] text-amber-600 font-medium">⚠ NEW</span>
+                      )}
                     </TableCell>
                     {screenMode === "bridge" ? (
                       <>
@@ -2782,6 +2878,12 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                         <TableCell className="text-right hidden lg:table-cell tabular-nums">{fmt(s.sharpe)}</TableCell>
                         <TableCell><SetupBadge type={s.setupType} grade={s.setupGrade} /></TableCell>
                         <TableCell className="text-right"><SignalScoreBadge score={s.signalScore} /></TableCell>
+                        <TableCell className="text-right">
+                          <SignalScoreBadge score={stabilityData?.[s.symbol]?.smoothedScore ?? s.signalScore} />
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <StabilityBadge stability={stabilityData?.[s.symbol]?.stability ?? "NEW"} smoothedScore={stabilityData?.[s.symbol]?.smoothedScore} />
+                        </TableCell>
                         <TableCell className="text-center hidden lg:table-cell">
                           <Sparkline prices={sparklineData?.[s.symbol] || []} width={50} height={18} />
                         </TableCell>

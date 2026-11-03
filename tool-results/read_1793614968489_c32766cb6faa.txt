@@ -1,0 +1,2002 @@
+     1→'use client';
+     2→
+     3→import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+     4→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+     5→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+     6→import { Button } from "@/components/ui/button";
+     7→import { Badge } from "@/components/ui/badge";
+     8→import { Progress } from "@/components/ui/progress";
+     9→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+    10→import { Input } from "@/components/ui/input";
+    11→import { Label } from "@/components/ui/label";
+    12→import { Skeleton } from "@/components/ui/skeleton";
+    13→import { Switch } from "@/components/ui/switch";
+    14→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    15→import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+    16→import { toast } from "@/hooks/use-toast";
+    17→import {
+    18→  Activity, ArrowDown, ArrowUp, RefreshCw, AlertTriangle,
+    19→  ShieldAlert, TrendingUp, TrendingDown, Gauge, Wallet, Target, Zap, Timer, Clock,
+    20→  Bell, BellRing, History, GitCompare, SlidersHorizontal, Search, Star, Send,
+    21→} from "lucide-react";
+    22→import {
+    23→  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
+    24→} from "recharts";
+    25→
+    26→import { ScreenedStock, AllocationStock, StopLossStock, StressScenario, SetupType, SetupGrade } from "@/lib/indicators";
+    27→import type { RegimeState } from "@/lib/regime";
+    28→import { Sparkline } from "@/components/sparkline";
+    29→
+    30→type ScreenResponse = {
+    31→  universeSize: number;
+    32→  passedData: number;
+    33→  passedTech: number;
+    34→  passedMc: number;
+    35→  top10: ScreenedStock[];
+    36→  runAt: string;
+    37→  elapsedMs: number;
+    38→  error?: string;
+    39→  warning?: string;
+    40→  stale?: boolean;
+    41→  fallback?: boolean;
+    42→  cached?: boolean;
+    43→};
+    44→
+    45→type ScreenChange = {
+    46→  date: string;          // ISO timestamp when the change was detected
+    47→  added: Array<{ symbol: string; ret6mPct: number }>;
+    48→  removed: string[];     // just symbols (we don't have full data for removed stocks)
+    49→};
+    50→
+    51→type RemovedStock = {
+    52→  symbol: string;
+    53→  sector: string;
+    54→  currentPrice: number;
+    55→  attemptedRupees: number;
+    56→  attemptedWeight: number;
+    57→  reason: string;
+    58→};
+    59→
+    60→type AllocateResponse = {
+    61→  allocation: AllocationStock[];
+    62→  removedStocks: RemovedStock[];
+    63→  mode?: "risk-parity" | "momentum";
+    64→  totalInvested: number;
+    65→  totalAllocated: number;
+    66→  cashLeftover: number;
+    67→  sectorBreakdown: Array<{ sector: string; weight: number; count: number; rupees: number }>;
+    68→};
+    69→
+    70→type RebalanceAction = "BUY MORE" | "HOLD" | "TRIM 30%" | "TRIM 60%" | "EXIT" | "INITIATE";
+    71→
+    72→type RebalanceItem = {
+    73→  symbol: string;
+    74→  longName: string;
+    75→  sector: string;
+    76→  action: RebalanceAction;
+    77→  currentPrice: number;
+    78→  entryPrice?: number;
+    79→  pnlPct?: number;
+    80→  currentMomentum: number;
+    81→  previousMomentum?: number;
+    82→  momentumDelta?: number;
+    83→  currentShares?: number;
+    84→  targetShares: number;
+    85→  sharesChange: number;
+    86→  rupeesChange: number;
+    87→  reason: string;
+    88→};
+    89→
+    90→type RebalanceResult = {
+    91→  items: RebalanceItem[];
+    92→  summary: {
+    93→    buyMore: number;
+    94→    hold: number;
+    95→    trim30: number;
+    96→    trim60: number;
+    97→    exit: number;
+    98→    initiate: number;
+    99→    totalBuyRupees: number;
+   100→    totalSellRupees: number;
+   101→    netCashflow: number;
+   102→  };
+   103→};
+   104→
+   105→type StopsResponse = {
+   106→  stops: StopLossStock[];
+   107→  totalPnl: number;
+   108→  totalInvested: number;
+   109→  pnlPct: number;
+   110→  runAt: string;
+   111→  statusCounts: { HOLD: number; WATCH: number; EXIT: number };
+   112→};
+   113→
+   114→type StressResponse = {
+   115→  scenarios: StressScenario[];
+   116→  totalInvested: number;
+   117→  worstDrawdown: number;
+   118→  worstLoss: number;
+   119→};
+   120→
+   121→type BacktestSummary = {
+   122→  backtest_period: string;
+   123→  rebalances: number;
+   124→  initial_capital: number;
+   125→  final_strategy: number;
+   126→  final_benchmark: number;
+   127→  total_strategy_ret_pct: number;
+   128→  total_benchmark_ret_pct: number;
+   129→  cagr_strategy_pct: number;
+   130→  cagr_benchmark_pct: number;
+   131→  max_drawdown_pct: number;
+   132→  sharpe: number;
+   133→  win_rate_pct: number;
+   134→  winners: number;
+   135→  losers: number;
+   136→  avg_winner_pct: number;
+   137→  avg_loser_pct: number;
+   138→  excess_return_pct: number;
+   139→};
+   140→
+   141→type BacktestResponse = {
+   142→  equity_curve: Array<{ date: string; strategy: number; benchmark: number }>;
+   143→  monthly_returns: Array<{ month: string; strategy_ret: number; benchmark_ret: number }>;
+   144→  summary: BacktestSummary | null;
+   145→  picks_history: Array<{ date: string; picks: string[]; strategy_ret: number; benchmark_ret: number }>;
+   146→  run_at: string;
+   147→  elapsedMs?: number;
+   148→  cached?: boolean;
+   149→  error?: string;
+   150→};
+   151→
+   152→type CorrelationResponse = {
+   153→  matrix: (string | number)[][];
+   154→  symbols: string[];
+   155→  effectiveBets: number;
+   156→  avgCorrelation: number;
+   157→  highCorrelationPairs: Array<{ a: string; b: string; rho: number }>;
+   158→  nDataPoints: number;
+   159→  error?: string;
+   160→};
+   161→
+   162→const fmt = (n: number, d = 2) =>
+   163→  isNaN(n) || n === null ? "—" : n.toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d });
+   164→const fmtINR = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+   165→const fmtPct = (n: number) => (isNaN(n) ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(2)}%`);
+   166→const IST = "Asia/Kolkata";
+   167→const fmtISTTime = (d: string | Date) => new Date(d).toLocaleTimeString("en-IN", { timeZone: IST, hour: "2-digit", minute: "2-digit" });
+   168→const fmtISTDateTime = (d: string | Date) => new Date(d).toLocaleString("en-IN", { timeZone: IST, day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+   169→const fmtISTDate = (d: string | Date) => new Date(d).toLocaleDateString("en-IN", { timeZone: IST, day: "2-digit", month: "short", year: "numeric" });
+   170→const fmtISTDateShort = (d: string | Date) => new Date(d).toLocaleDateString("en-IN", { timeZone: IST, day: "2-digit", month: "short" });
+   171→
+   172→const AUTO_REFRESH_OPTIONS = [
+   173→  { value: 15, label: "15 minutes" },
+   174→  { value: 30, label: "30 minutes" },
+   175→  { value: 60, label: "1 hour" },
+   176→  { value: 180, label: "3 hours" },
+   177→  { value: 360, label: "6 hours" },
+   178→];
+   179→
+   180→export default function Home() {
+   181→  const [tab, setTab] = useState("screen");
+   182→  const [running, setRunning] = useState<"screen" | "stops" | null>(null);
+   183→
+   184→  const [screen, setScreen] = useState<ScreenResponse | null>(null);
+   185→  const [prevScreenSymbols, setPrevScreenSymbols] = useState<string[] | null>(null);
+   186→  const [changeHistory, setChangeHistory] = useState<ScreenChange[]>([]);
+   187→  const [heldStocks, setHeldStocks] = useState<HeldStock[]>([]);
+   188→  const heldStocksRef = useRef<HeldStock[]>([]);
+   189→  const screenRef = useRef<ScreenResponse | null>(null);
+   190→  const [alloc, setAlloc] = useState<AllocateResponse | null>(null);
+   191→  const [stops, setStops] = useState<StopsResponse | null>(null);
+   192→  const [stress, setStress] = useState<StressResponse | null>(null);
+   193→  const [totalInvestment, setTotalInvestment] = useState(200000);
+   194→  const [topN, setTopN] = useState(10);  // ← NEW: customizable portfolio size
+   195→  const [allocDirty, setAllocDirty] = useState(false);
+   196→
+   197→  // Filter thresholds (loosened defaults yield ~25 qualifiers)
+   198→  const [filters, setFilters] = useState({ rsiMin: 50, mcapMin: 200, volMin: 20000 });
+   199→
+   200→  // Allocation mode: "risk-parity" (inverse-vol) or "momentum" (momentum-weighted)
+   201→  const [allocationMode, setAllocationMode] = useState<"risk-parity" | "momentum">("risk-parity");
+   202→
+   203→  // Rebalance state
+   204→  const [rebalance, setRebalance] = useState<RebalanceResult | null>(null);
+   205→  const [rebalanceRunning, setRebalanceRunning] = useState(false);
+   206→  const [showZerodhaDialog, setShowZerodhaDialog] = useState(false);
+   207→  const [kiteToken, setKiteToken] = useState("");
+   208→  const [kiteConnecting, setKiteConnecting] = useState(false);
+   209→  const [kiteConnected, setKiteConnected] = useState(false);
+   210→
+   211→  // ===== Phase 1: Market Regime + Analyze state =====
+   212→  const kiteAccessTokenRef = useRef<string>("");
+   213→  const [regime, setRegime] = useState<RegimeState | null>(null);
+   214→  const [regimeLoading, setRegimeLoading] = useState(false);
+   215→  const [regimeError, setRegimeError] = useState<string | null>(null);
+   216→
+   217→  // Analyze state
+   218→  const [analyzeSymbol, setAnalyzeSymbol] = useState<string>("");
+   219→  const [analyzeInput, setAnalyzeInput] = useState<string>("");
+   220→  const [analyzeData, setAnalyzeData] = useState<ScreenedStock | null>(null);
+   221→  const [analyzeLoading, setAnalyzeLoading] = useState(false);
+   222→  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+   223→  const [analyzeSuggestions, setAnalyzeSuggestions] = useState<string[]>([]);
+   224→
+   225→  // R:R override (null = use per-setup presets)
+   226→  const [rrOverride, setRrOverride] = useState<{ t1: number; t2: number } | null>(null);
+   227→
+   228→  // Screen mode: "momentum" (Phase 1) or "bridge" (Pullback Bridge screener)
+   229→  const [screenMode, setScreenMode] = useState<"momentum" | "bridge">("momentum");
+   230→
+   231→  const fetchRegime = useCallback(async () => {
+   232→    setRegimeLoading(true);
+   233→    setRegimeError(null);
+   234→    try {
+   235→      const headers: Record<string, string> = {};
+   236→      if (kiteAccessTokenRef.current) {
+   237→        headers["x-kite-token"] = kiteAccessTokenRef.current;
+   238→      }
+   239→      const res = await fetch("/api/regime", { headers, cache: "no-store" });
+   240→      const data = await res.json();
+   241→      if (!res.ok && data?.error) {
+   242→        setRegimeError(data.error);
+   243→      }
+   244→      setRegime(data as RegimeState);
+   245→      return data as RegimeState;
+   246→    } catch (e: any) {
+   247→      setRegimeError(e?.message || "Failed to fetch regime");
+   248→      return null;
+   249→    } finally {
+   250→      setRegimeLoading(false);
+   251→    }
+   252→  }, []);
+   253→
+   254→  // On mount: restore kite token from localStorage, check status, fetch regime
+   255→  useEffect(() => {
+   256→    try {
+   257→      const storedToken = localStorage.getItem("kite_access_token");
+   258→      if (storedToken) kiteAccessTokenRef.current = storedToken;
+   259→    } catch {}
+   260→
+   261→    // Check Zerodha status
+   262→    fetch("/api/zerodha/status", { cache: "no-store" })
+   263→      .then((r) => r.json())
+   264→      .then((d) => {
+   265→        if (d?.connected) {
+   266→          setKiteConnected(true);
+   267→        } else if (d?.reason === "token_expired") {
+   268→          // Token cookie may have expired — clear local ref
+   269→          try { localStorage.removeItem("kite_access_token"); } catch {}
+   270→          kiteAccessTokenRef.current = "";
+   271→        }
+   272→      })
+   273→      .catch(() => {});
+   274→
+   275→    // Initial regime fetch
+   276→    fetchRegime();
+   277→  }, [fetchRegime]);
+   278→
+   279→  // Auto-retry regime every 30s while niftyClose === 0 (limited data)
+   280→  useEffect(() => {
+   281→    if (regime && regime.niftyClose > 0) return;
+   282→    const id = setInterval(() => {
+   283→      fetchRegime();
+   284→    }, 30000);
+   285→    return () => clearInterval(id);
+   286→  }, [regime, fetchRegime]);
+   287→
+   288→  const runAnalyze = useCallback(async (symbol: string) => {
+   289→    const sym = symbol.trim().toUpperCase();
+   290→    if (!sym) return;
+   291→    setAnalyzeLoading(true);
+   292→    setAnalyzeError(null);
+   293→    setAnalyzeData(null);
+   294→    setAnalyzeSuggestions([]);
+   295→    setAnalyzeSymbol(sym);
+   296→    setAnalyzeInput(sym);
+   297→    try {
+   298→      const res = await fetch(`/api/analyze?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+   299→      const data = await res.json();
+   300→      if (!res.ok) {
+   301→        setAnalyzeError(data?.error || `Analyze failed (${res.status})`);
+   302→        if (Array.isArray(data?.suggestions)) setAnalyzeSuggestions(data.suggestions);
+   303→      } else {
+   304→        setAnalyzeData(data as ScreenedStock);
+   305→      }
+   306→    } catch (e: any) {
+   307→      setAnalyzeError(e?.message || "Network error");
+   308→    } finally {
+   309→      setAnalyzeLoading(false);
+   310→    }
+   311→  }, []);
+   312→
+   313→  // On mount: check URL for Zerodha callback token
+   314→  useEffect(() => {
+   315→    try {
+   316→      const params = new URLSearchParams(window.location.search);
+   317→      const zerodhaStatus = params.get("zerodha");
+   318→      const requestToken = params.get("request_token");
+   319→
+   320→      if (zerodhaStatus === "token" && requestToken) {
+   321→        // Auto-connect with the token from URL
+   322→        setShowZerodhaDialog(true);
+   323→        setKiteToken(requestToken);
+   324→        setKiteConnecting(true);
+   325→
+   326→        fetch("/api/zerodha/token", {
+   327→          method: "POST",
+   328→          headers: { "Content-Type": "application/json" },
+   329→          body: JSON.stringify({ request_token: requestToken }),
+   330→        })
+   331→          .then(async (res) => {
+   332→            if (res.ok) {
+   333→              const data = await res.json();
+   334→              if (data?.access_token) {
+   335→                try { localStorage.setItem("kite_access_token", data.access_token); } catch {}
+   336→                kiteAccessTokenRef.current = data.access_token;
+   337→              }
+   338→              setKiteConnected(true);
+   339→              setKiteConnecting(false);
+   340→              toast({ title: "Connected to Zerodha!", description: "You can now use Zerodha data source" });
+   341→              setTimeout(() => fetchRegime(), 500);
+   342→            } else {
+   343→              const err = await res.json();
+   344→              setKiteConnecting(false);
+   345→              toast({ title: "Zerodha connection failed", description: err.error || "Unknown error", variant: "destructive" });
+   346→            }
+   347→          })
+   348→          .catch(() => {
+   349→            setKiteConnecting(false);
+   350→            toast({ title: "Connection failed", description: "Network error", variant: "destructive" });
+   351→          });
+   352→
+   353→        // Clean the URL (remove query params)
+   354→        window.history.replaceState({}, "", "/");
+   355→      } else if (zerodhaStatus === "error") {
+   356→        setShowZerodhaDialog(true);
+   357→        toast({ title: "Zerodha authorization failed", description: "Please try again", variant: "destructive" });
+   358→        window.history.replaceState({}, "", "/");
+   359→      }
+   360→    } catch {}
+   361→  }, []);
+   362→
+   363→  // Auto-load state (effect is defined AFTER runScreen below to avoid TDZ error)
+   364→  const [elapsedMs, setElapsedMs] = useState(0);
+   365→
+   366→  // Auto-refresh state
+   367→  const [autoRefreshOn, setAutoRefreshOn] = useState(false);
+   368→  const [autoRefreshMin, setAutoRefreshMin] = useState(60);
+   369→  const [nextRunAt, setNextRunAt] = useState<number | null>(null);
+   370→  const [countdown, setCountdown] = useState<string>("");
+   371→  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+   372→
+   373→  // Backtest state
+   374→  const [backtest, setBacktest] = useState<BacktestResponse | null>(null);
+   375→  const [backtestRunning, setBacktestRunning] = useState(false);
+   376→
+   377→  // Correlation state
+   378→  const [correlation, setCorrelation] = useState<CorrelationResponse | null>(null);
+   379→  const [correlationRunning, setCorrelationRunning] = useState(false);
+   380→
+   381→  // Push notification state
+   382→  // Initialize as "loading" — replaced with real value on client mount via useEffect.
+   383→  // This avoids SSR hydration mismatch because Notification doesn't exist server-side.
+   384→  const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported" | "loading">("loading");
+   385→  const lastAlertedRef = useRef<string>("");  // hash of last alerted symbols to avoid spamming
+   386→
+   387→  useEffect(() => {
+   388→    setNotifPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
+   389→  }, []);
+   390→
+   391→  // Load change history from localStorage on mount (persists across sessions)
+   392→  useEffect(() => {
+   393→    try {
+   394→      const stored = localStorage.getItem("nifty_change_history");
+   395→      if (stored) {
+   396→        const parsed = JSON.parse(stored) as ScreenChange[];
+   397→        if (Array.isArray(parsed)) setChangeHistory(parsed);
+   398→      }
+   399→    } catch { /* ignore parse errors */ }
+   400→  }, []);
+   401→
+   402→  // Save change history to localStorage whenever it changes
+   403→  useEffect(() => {
+   404→    try {
+   405→      localStorage.setItem("nifty_change_history", JSON.stringify(changeHistory.slice(-20)));
+   406→    } catch { /* storage full or unavailable */ }
+   407→  }, [changeHistory]);
+   408→
+   409→  const runScreen = useCallback(async (silent = false, topNOverride?: number, filtersOverride?: typeof filters, modeOverride?: "momentum" | "bridge") => {
+   410→    setRunning("screen");
+   411→    const mode = modeOverride ?? screenMode;
+   412→    // Start elapsed timer so progress bar updates live
+   413→    const startTime = Date.now();
+   414→    setElapsedMs(0);
+   415→    const elapsedInterval = setInterval(() => {
+   416→      setElapsedMs(Date.now() - startTime);
+   417→    }, 500);
+   418→    try {
+   419→      const n = topNOverride ?? topN;
+   420→      const f = filtersOverride ?? filters;
+   421→      const qs = new URLSearchParams({
+   422→        topN: String(n),
+   423→        rsiMin: String(f.rsiMin),
+   424→        mcapMin: String(f.mcapMin),
+   425→        volMin: String(f.volMin),
+   426→      });
+   427→      const endpoint = mode === "bridge" ? "/api/bridge-screen" : "/api/screen";
+   428→      // Bridge screen takes ~70s — use AbortController with 120s timeout
+   429→      const controller = new AbortController();
+   430→      const timeoutId = setTimeout(() => controller.abort(), 120000);
+   431→      const res = await fetch(`${endpoint}?${qs}`, {
+   432→        cache: "no-store",
+   433→        signal: controller.signal,
+   434→      });
+   435→      clearTimeout(timeoutId);
+   436→      if (!res.ok) throw new Error(`Screen failed (${res.status})`);
+   437→      const data: ScreenResponse = await res.json();
+   438→      const prev = screenRef.current;
+   439→      if (prev && prev.top10.length > 0 && data.top10.length > 0) {
+   440→        const prevSyms = prev.top10.map((s) => s.symbol);
+   441→        const currentSyms = data.top10.map((s) => s.symbol);
+   442→        const added = currentSyms.filter((s) => !prevSyms.includes(s));
+   443→        const removed = prevSyms.filter((s) => !currentSyms.includes(s));
+   444→        if (added.length > 0 || removed.length > 0) {
+   445→          const change: ScreenChange = {
+   446→            date: new Date().toISOString(),
+   447→            added: added.map((sym) => {
+   448→              const stock = data.top10.find((s) => s.symbol === sym);
+   449→              return { symbol: sym, ret6mPct: stock?.ret6mPct ?? 0 };
+   450→            }),
+   451→            removed,
+   452→          };
+   453→          setChangeHistory((prev) => [...prev, change].slice(-20));
+   454→        }
+   455→        setPrevScreenSymbols(prevSyms);
+   456→      }
+   457→      screenRef.current = data;
+   458→      setScreen(data);
+   459→      setAllocDirty(true);
+   460→      if (!silent) {
+   461→        if (data.error) {
+   462→          toast({ title: "Screen failed — Yahoo rate-limited", description: data.error.slice(0, 100), variant: "destructive" });
+   463→        } else if (data.warning) {
+   464→          toast({ title: "Showing cached data", description: data.warning.slice(0, 100) });
+   465→        } else {
+   466→          const label = mode === "bridge" ? "Bridge screen" : "Screen";
+   467→          toast({ title: `${label} complete`, description: `${data.top10.length} stocks in Top ${n}` });
+   468→        }
+   469→      }
+   470→      return data;
+   471→    } catch (e: any) {
+   472→      const msg = e?.name === "AbortError"
+   473→        ? "Screen timed out after 120s — Yahoo may be rate-limiting. Try again."
+   474→        : e instanceof Error ? e.message : "Unknown";
+   475→      toast({ title: "Screen failed", description: msg, variant: "destructive" });
+   476→      return null;
+   477→    } finally {
+   478→      clearInterval(elapsedInterval);
+   479→      setRunning(null);
+   480→    }
+   481→  }, [topN, filters, screenMode]);
+   482→
+   483→  // MANDATORY: Do NOT auto-fetch on mount. Restore from localStorage only.
+   484→  // Screen ONLY refreshes when user clicks Run Screen, auto-refresh is ON,
+   485→  // or user changes Top N / filters. NEVER add runScreen() here.
+   486→  useEffect(() => {
+   487→    try {
+   488→      const s = localStorage.getItem("nifty_last_screen");
+   489→      if (s) { const p = JSON.parse(s); if (p?.top10?.length > 0) { screenRef.current = p; setScreen(p); } }
+   490→      const h = localStorage.getItem("nifty_held_stocks");
+   491→      if (h) { const ph = JSON.parse(h); if (Array.isArray(ph)) { setHeldStocks(ph); heldStocksRef.current = ph; } }
+   492→      const c = localStorage.getItem("nifty_change_history");
+   493→      if (c) { const pc = JSON.parse(c); if (Array.isArray(pc)) setChangeHistory(pc); }
+   494→    } catch {}
+   495→  }, []);
+   496→  useEffect(() => { if (screen?.top10?.length > 0) try { localStorage.setItem("nifty_last_screen", JSON.stringify(screen)); } catch {} }, [screen]);
+   497→
+   498→  // ===== Publish screen results to GitHub (for Vercel live app) =====
+   499→  // ===== Watchlist — stocks you're tracking, persists in localStorage =====
+   500→  type WatchlistItem = {
+   501→    symbol: string;
+   502→    addedAt: string;
+   503→    price: number;
+   504→    setupType?: string;
+   505→    signalScore?: number;
+   506→  };
+   507→  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+   508→
+   509→  // Load watchlist from localStorage on mount
+   510→  useEffect(() => {
+   511→    try {
+   512→      const stored = localStorage.getItem("nifty_watchlist");
+   513→      if (stored) {
+   514→        const parsed = JSON.parse(stored);
+   515→        if (Array.isArray(parsed)) setWatchlist(parsed);
+   516→      }
+   517→    } catch {}
+   518→  }, []);
+   519→
+   520→  // Save watchlist to localStorage whenever it changes
+   521→  useEffect(() => {
+   522→    try { localStorage.setItem("nifty_watchlist", JSON.stringify(watchlist)); } catch {}
+   523→  }, [watchlist]);
+   524→
+   525→  const addToWatchlist = useCallback((stock: any) => {
+   526→    setWatchlist(prev => {
+   527→      if (prev.some(w => w.symbol === stock.symbol)) return prev;
+   528→      return [...prev, {
+   529→        symbol: stock.symbol,
+   530→        addedAt: new Date().toISOString(),
+   531→        price: stock.currentPrice,
+   532→        setupType: stock.setupType,
+   533→        signalScore: stock.signalScore,
+   534→      }];
+   535→    });
+   536→    toast({ title: "⭐ Added to Watchlist", description: stock.symbol });
+   537→  }, []);
+   538→
+   539→  const removeFromWatchlist = useCallback((symbol: string) => {
+   540→    setWatchlist(prev => prev.filter(w => w.symbol !== symbol));
+   541→    toast({ title: "Removed from Watchlist", description: symbol });
+   542→  }, []);
+   543→
+   544→  const isInWatchlist = useCallback((symbol: string) => {
+   545→    return watchlist.some(w => w.symbol === symbol);
+   546→  }, [watchlist]);
+   547→
+   548→  // ===== Telegram alerts config =====
+   549→  const [telegramConfig, setTelegramConfig] = useState<{ botToken: string; chatId: string; enabled: boolean }>({
+   550→    botToken: "",
+   551→    chatId: "",
+   552→    enabled: false,
+   553→  });
+   554→
+   555→  useEffect(() => {
+   556→    try {
+   557→      const stored = localStorage.getItem("nifty_telegram");
+   558→      if (stored) setTelegramConfig(JSON.parse(stored));
+   559→    } catch {}
+   560→  }, []);
+   561→
+   562→  useEffect(() => {
+   563→    try { localStorage.setItem("nifty_telegram", JSON.stringify(telegramConfig)); } catch {}
+   564→  }, [telegramConfig]);
+   565→
+   566→  const sendTelegramAlert = useCallback(async (message: string) => {
+   567→    if (!telegramConfig.enabled || !telegramConfig.botToken || !telegramConfig.chatId) return;
+   568→    try {
+   569→      await fetch(`/api/telegram-alert`, {
+   570→        method: "POST",
+   571→        headers: { "Content-Type": "application/json" },
+   572→        body: JSON.stringify({
+   573→          botToken: telegramConfig.botToken,
+   574→          chatId: telegramConfig.chatId,
+   575→          message,
+   576→        }),
+   577→      });
+   578→    } catch {}
+   579→  }, [telegramConfig]);
+   580→
+   581→  // Send alert when screen completes with new A+ stocks
+   582→  const lastTelegramAlertedRef = useRef<string>("");
+   583→  useEffect(() => {
+   584→    if (!screen?.top10 || !telegramConfig.enabled) return;
+   585→    const aPlusStocks = screen.top10.filter((s: any) => s.setupGrade === "A+" || (s.signalScore ?? 0) >= 85);
+   586→    if (aPlusStocks.length === 0) return;
+   587→    const symbols = aPlusStocks.map((s: any) => s.symbol).sort().join(",");
+   588→    if (lastTelegramAlertedRef.current === symbols) return;
+   589→    lastTelegramAlertedRef.current = symbols;
+   590→    const msg = `🚀 ${aPlusStocks.length} new A+ signal${aPlusStocks.length > 1 ? "s" : ""}:\n${aPlusStocks.map((s: any) => `• ${s.symbol} — ${s.setupType} (Signal: ${s.signalScore})`).join("\n")}`;
+   591→    sendTelegramAlert(msg);
+   592→  }, [screen?.runAt, telegramConfig.enabled, sendTelegramAlert]);
+   593→
+   594→  const [publishing, setPublishing] = useState(false);
+   595→  const [lastPublished, setLastPublished] = useState<string | null>(null);
+   596→
+   597→  // Sparkline data — 30-day price charts for each screened stock
+   598→  const [sparklineData, setSparklineData] = useState<Record<string, number[]>>({});
+   599→
+   600→  // Fetch sparkline data whenever screen results change
+   601→  useEffect(() => {
+   602→    if (!screen?.top10 || screen.top10.length === 0) {
+   603→      setSparklineData({});
+   604→      return;
+   605→    }
+   606→    const symbols = screen.top10.map((s: any) => s.symbol).join(",");
+   607→    fetch(`/api/sparklines?symbols=${symbols}`, { cache: "no-store" })
+   608→      .then(r => r.json())
+   609→      .then(data => {
+   610→        if (data.sparklines) setSparklineData(data.sparklines);
+   611→      })
+   612→      .catch(() => {});
+   613→  }, [screen?.runAt]);
+   614→
+   615→  const publishToLive = useCallback(async () => {
+   616→    if (!screen || screen.top10.length === 0) {
+   617→      toast({ title: "No screen to publish", description: "Run the screen first" });
+   618→      return;
+   619→    }
+   620→    setPublishing(true);
+   621→    try {
+   622→      const res = await fetch("/api/publish-screen", {
+   623→        method: "POST",
+   624→        headers: { "Content-Type": "application/json" },
+   625→        body: JSON.stringify(screen),
+   626→      });
+   627→      if (!res.ok) throw new Error("Publish failed");
+   628→      setLastPublished(new Date().toISOString());
+   629→      toast({ title: "✅ Published to Live!", description: `${screen.top10.length} stocks pushed to Vercel. Live app updates in ~2 min.` });
+   630→    } catch (e: any) {
+   631→      toast({ title: "Publish failed", description: e.message, variant: "destructive" });
+   632→    } finally {
+   633→      setPublishing(false);
+   634→    }
+   635→  }, [screen]);
+   636→
+   637→  // ===== Refresh Prices — fetch live LTP without re-running the full screen =====
+   638→  const [refreshingPrices, setRefreshingPrices] = useState(false);
+   639→
+   640→  const refreshPrices = useCallback(async () => {
+   641→    if (!screen || screen.top10.length === 0) return;
+   642→    setRefreshingPrices(true);
+   643→    try {
+   644→      const kiteTok = kiteAccessTokenRef.current || "";
+   645→      const res = await fetch("/api/refresh-prices", {
+   646→        method: "POST",
+   647→        headers: { "Content-Type": "application/json" },
+   648→        body: JSON.stringify({ stocks: screen.top10, kiteToken: kiteTok }),
+   649→      });
+   650→      if (!res.ok) throw new Error("Price refresh failed");
+   651→      const data = await res.json();
+   652→      if (data.prices) {
+   653→        // Update prices in the screen object
+   654→        const updatedTop10 = screen.top10.map((s: any) => {
+   655→          const update = data.prices[s.symbol];
+   656→          if (update) {
+   657→            return { ...s, currentPrice: update.price, _priceChange: update.changePct };
+   658→          }
+   659→          return s;
+   660→        });
+   661→        const updatedScreen = { ...screen, top10: updatedTop10, _priceRefreshedAt: data.refreshedAt };
+   662→        screenRef.current = updatedScreen;
+   663→        setScreen(updatedScreen);
+   664→        const count = Object.keys(data.prices).length;
+   665→        const src = data.source === "zerodha" ? "Zerodha" : "Yahoo";
+   666→        toast({ title: "✅ Prices refreshed", description: `${count} stocks updated from ${src}` });
+   667→      }
+   668→    } catch (e: any) {
+   669→      toast({ title: "Price refresh failed", description: e.message, variant: "destructive" });
+   670→    } finally {
+   671→      setRefreshingPrices(false);
+   672→    }
+   673→  }, [screen]);
+   674→
+   675→  // ===== Screen History — snapshot full top 30 on every Run Screen =====
+   676→  type ScreenSnapshot = {
+   677→    date: string; mode: "momentum" | "bridge"; topN: number;
+   678→    stocks: Array<{ symbol: string; rank: number; signalScore: number; currentPrice: number; setupType: string; setupGrade: string; ret6mPct: number; ret1wPct: number; }>;
+   679→  };
+   680→  const [screenHistory, setScreenHistory] = useState<ScreenSnapshot[]>([]);
+   681→  const [historySearchSymbol, setHistorySearchSymbol] = useState<string>("");
+   682→
+   683→  useEffect(() => {
+   684→    try {
+   685→      const stored = localStorage.getItem("nifty_screen_history");
+   686→      if (stored) {
+   687→        const parsed = JSON.parse(stored) as ScreenSnapshot[];
+   688→        if (Array.isArray(parsed)) {
+   689→          const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+   690→          setScreenHistory(parsed.filter(s => new Date(s.date).getTime() > cutoff));
+   691→        }
+   692→      }
+   693→    } catch {}
+   694→  }, []);
+   695→
+   696→  useEffect(() => {
+   697→    try { localStorage.setItem("nifty_screen_history", JSON.stringify(screenHistory.slice(-200))); } catch {}
+   698→  }, [screenHistory]);
+   699→
+   700→  useEffect(() => {
+   701→    if (screen?.top10?.length > 0 && screen.runAt) {
+   702→      const snapshot: ScreenSnapshot = {
+   703→        date: screen.runAt, mode: screenMode, topN: screen.top10.length,
+   704→        stocks: screen.top10.map((s: any) => ({
+   705→          symbol: s.symbol, rank: s.rank, signalScore: s.signalScore ?? 0,
+   706→          currentPrice: s.currentPrice, setupType: s.setupType ?? "UPTREND",
+   707→          setupGrade: s.setupGrade ?? "C", ret6mPct: s.ret6mPct ?? 0, ret1wPct: s.ret1wPct ?? 0,
+   708→        })),
+   709→      };
+   710→      setScreenHistory(prev => {
+   711→        if (prev.length > 0 && prev[prev.length - 1].date === snapshot.date) return prev;
+   712→        return [...prev, snapshot].slice(-200);
+   713→      });
+   714→    }
+   715→  }, [screen?.runAt, screenMode]);
+   716→
+   717→  // ===== Signal Score Smoothing + Stability + Consensus =====
+   718→  const stabilityData = useMemo(() => {
+   719→    if (!screen?.top10 || screenHistory.length === 0) return {};
+   720→    const recent = screenHistory.slice(-3);
+   721→    const result: Record<string, { smoothedScore: number; stability: string; consensus: boolean; appearances: number; prevRanks: number[] }> = {};
+   722→    for (const stock of screen.top10) {
+   723→      const sym = stock.symbol;
+   724→      const scores: number[] = [];
+   725→      const ranks: number[] = [];
+   726→      let appearances = 0;
+   727→      for (const snap of recent) {
+   728→        const found = snap.stocks.find((s: any) => s.symbol === sym);
+   729→        if (found) { scores.push(found.signalScore); ranks.push(found.rank); appearances++; }
+   730→      }
+   731→      let smoothedScore = stock.signalScore ?? 0;
+   732→      if (scores.length >= 2) {
+   733→        const weights = [0.5, 0.3, 0.2].slice(0, scores.length);
+   734→        const weightSum = weights.reduce((a, b) => a + b, 0);
+   735→        smoothedScore = Math.round(scores.reduce((sum, s, i) => sum + s * weights[i], 0) / weightSum);
+   736→      }
+   737→      let stability = "NEW";
+   738→      if (ranks.length >= 2) {
+   739→        const rankChanges = ranks.slice(1).map((r, i) => Math.abs(r - ranks[i]));
+   740→        const maxChange = Math.max(...rankChanges);
+   741→        if (maxChange <= 2) stability = "STABLE";
+   742→        else if (maxChange <= 5) stability = "VOLATILE";
+   743→        else stability = "ERRATIC";
+   744→      }
+   745→      const consensus = appearances >= 2;
+   746→      result[sym] = { smoothedScore, stability, consensus, appearances, prevRanks: ranks };
+   747→    }
+   748→    return result;
+   749→  }, [screen?.runAt, screenHistory]);
+   750→
+   751→  useEffect(() => { try { localStorage.setItem("nifty_held_stocks", JSON.stringify(heldStocks)); } catch {} }, [heldStocks]);
+   752→  useEffect(() => { try { localStorage.setItem("nifty_change_history", JSON.stringify(changeHistory.slice(-20))); } catch {} }, [changeHistory]);
+   753→
+   754→  const runAllocation = useCallback(async (silent = false, modeOverride?: "risk-parity" | "momentum") => {
+   755→    if (!screen) return;
+   756→    try {
+   757→      const mode = modeOverride ?? allocationMode;
+   758→      const res = await fetch("/api/allocate", {
+   759→        method: "POST",
+   760→        headers: { "Content-Type": "application/json" },
+   761→        body: JSON.stringify({ stocks: screen.top10, totalInvestment, mode }),
+   762→      });
+   763→      if (!res.ok) throw new Error("Allocation failed");
+   764→      const data: AllocateResponse = await res.json();
+   765→      setAlloc(data);
+   766→      setAllocDirty(false);
+   767→      // Invalidate rebalance since allocation changed
+   768→      setRebalance(null);
+   769→      if (!silent) {
+   770→        toast({ title: "Allocation computed", description: `${fmtINR(data.totalInvested)} across ${data.allocation.length} stocks (${mode === "momentum" ? "momentum-weighted" : "risk parity"})` });
+   771→      }
+   772→      return data;
+   773→    } catch (e) {
+   774→      if (!silent) {
+   775→        toast({ title: "Allocation failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   776→      }
+   777→      return null;
+   778→    }
+   779→  }, [screen, totalInvestment, allocationMode]);
+   780→
+   781→  const runRebalance = useCallback(async () => {
+   782→    if (!alloc || !screen) return;
+   783→    setRebalanceRunning(true);
+   784→    try {
+   785→      const res = await fetch("/api/rebalance", {
+   786→        method: "POST",
+   787→        headers: { "Content-Type": "application/json" },
+   788→        body: JSON.stringify({
+   789→          allocation: alloc.allocation,
+   790→          screen: screen.top10,
+   791→          totalInvestment: alloc.totalInvested,
+   792→        }),
+   793→      });
+   794→      if (!res.ok) throw new Error("Rebalance failed");
+   795→      const data: RebalanceResult = await res.json();
+   796→      setRebalance(data);
+   797→      const s = data.summary;
+   798→      toast({
+   799→        title: "Rebalance computed",
+   800→        description: `${s.buyMore} buy more · ${s.hold} hold · ${s.trim30 + s.trim60} trim · ${s.exit} exit · ${s.initiate} new`,
+   801→      });
+   802→    } catch (e) {
+   803→      toast({ title: "Rebalance failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   804→    } finally {
+   805→      setRebalanceRunning(false);
+   806→    }
+   807→  }, [alloc, screen]);
+   808→
+   809→  const runStops = useCallback(async (silent = false) => {
+   810→    if (!alloc) return;
+   811→    if (!silent) setRunning("stops");
+   812→    try {
+   813→      const res = await fetch("/api/stops", {
+   814→        method: "POST",
+   815→        headers: { "Content-Type": "application/json" },
+   816→        body: JSON.stringify({ allocation: alloc.allocation }),
+   817→      });
+   818→      if (!res.ok) throw new Error("Stop-loss fetch failed");
+   819→      const data: StopsResponse = await res.json();
+   820→      setStops(data);
+   821→      if (!silent) {
+   822→        toast({ title: "Stop-loss refreshed", description: `P&L ${fmtPct(data.pnlPct)} • ${data.statusCounts.HOLD} HOLD, ${data.statusCounts.WATCH} WATCH, ${data.statusCounts.EXIT} EXIT` });
+   823→      }
+   824→      return data;
+   825→    } catch (e) {
+   826→      if (!silent) {
+   827→        toast({ title: "Stop-loss failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   828→      }
+   829→      return null;
+   830→    } finally {
+   831→      setRunning(null);
+   832→    }
+   833→  }, [alloc]);
+   834→
+   835→  const runStress = useCallback(async (silent = false) => {
+   836→    if (!alloc) return;
+   837→    try {
+   838→      const res = await fetch("/api/stress", {
+   839→        method: "POST",
+   840→        headers: { "Content-Type": "application/json" },
+   841→        body: JSON.stringify({ allocation: alloc.allocation, totalInvested: alloc.totalInvested }),
+   842→      });
+   843→      if (!res.ok) throw new Error("Stress test failed");
+   844→      const data: StressResponse = await res.json();
+   845→      setStress(data);
+   846→      if (!silent) {
+   847→        toast({ title: "Stress test complete", description: `Worst drawdown ${data.worstDrawdown.toFixed(2)}%` });
+   848→      }
+   849→      return data;
+   850→    } catch (e) {
+   851→      if (!silent) {
+   852→        toast({ title: "Stress test failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   853→      }
+   854→      return null;
+   855→    }
+   856→  }, [alloc]);
+   857→
+   858→  // ---------- Auto-refresh engine ----------
+   859→  // On each tick, run screen silently. If allocation exists, re-run it. If stops exist, re-run them.
+   860→  // If stress exists, re-run it too. Then reset the next-run timer.
+   861→  const runAutoRefresh = useCallback(async () => {
+   862→    const fresh = await runScreen(true);
+   863→    if (!fresh) return;
+   864→    // re-allocate if user already had an allocation
+   865→    const newAlloc = await runAllocation(true);
+   866→    if (newAlloc) {
+   867→      // re-run stops + stress using the new allocation
+   868→      const stopsData = await runStopsWith(newAlloc, true);
+   869→      await runStressWith(newAlloc, true);
+   870→      // Re-run correlation if user had it open
+   871→      if (correlation) {
+   872→        await runCorrelationWith(newAlloc);
+   873→      }
+   874→      // Fire push notifications if any EXIT/WATCH holdings
+   875→      if (stopsData) {
+   876→        fireNotificationsIfAlert(stopsData);
+   877→      }
+   878→    }
+   879→    setNextRunAt(Date.now() + autoRefreshMin * 60 * 1000);
+   880→    toast({
+   881→      title: "Auto-refresh complete",
+   882→      description: `Next refresh in ${autoRefreshMin} min · ${fmtISTTime(Date.now() + autoRefreshMin * 60 * 1000)}`,
+   883→    });
+   884→  }, [runScreen, runAllocation, autoRefreshMin, correlation]);
+   885→
+   886→  // ---------- Backtest ----------
+   887→  const runBacktest = useCallback(async () => {
+   888→    setBacktestRunning(true);
+   889→    try {
+   890→      const res = await fetch("/api/backtest", { cache: "no-store" });
+   891→      if (!res.ok) throw new Error(`Backtest failed (${res.status})`);
+   892→      const data: BacktestResponse = await res.json();
+   893→      setBacktest(data);
+   894→      if (data.summary) {
+   895→        toast({
+   896→          title: "Backtest complete",
+   897→          description: `CAGR ${data.summary.cagr_strategy_pct}% vs Nifty ${data.summary.cagr_benchmark_pct}% · Sharpe ${data.summary.sharpe}`,
+   898→        });
+   899→      } else if (data.error) {
+   900→        toast({ title: "Backtest failed", description: data.error, variant: "destructive" });
+   901→      }
+   902→    } catch (e) {
+   903→      toast({ title: "Backtest failed", description: e instanceof Error ? e.message : "Unknown", variant: "destructive" });
+   904→    } finally {
+   905→      setBacktestRunning(false);
+   906→    }
+   907→  }, []);
+   908→
+   909→  // ---------- Correlation ----------
+   910→  const runCorrelationWith = useCallback(async (allocArg: AllocateResponse) => {
+   911→    setCorrelationRunning(true);
+   912→    try {
+   913→      const res = await fetch("/api/correlation", {
+   914→        method: "POST",
+   915→        headers: { "Content-Type": "application/json" },
+   916→        body: JSON.stringify({ allocation: allocArg.allocation }),
+   917→      });
+   918→      if (!res.ok) throw new Error("Correlation failed");
+   919→      const data: CorrelationResponse = await res.json();
+   920→      setCorrelation(data);
+   921→      return data;
+   922→    } catch {
+   923→      return null;
+   924→    } finally {
+   925→      setCorrelationRunning(false);
+   926→    }
+   927→  }, []);
+   928→
+   929→  const runCorrelation = useCallback(async () => {
+   930→    if (!alloc) return;
+   931→    const data = await runCorrelationWith(alloc);
+   932→    if (data && !data.error) {
+   933→      toast({
+   934→        title: "Correlation computed",
+   935→        description: `${data.symbols.length} stocks · Effective bets: ${data.effectiveBets} · Avg ρ: ${data.avgCorrelation.toFixed(2)}`,
+   936→      });
+   937→    } else if (data?.error) {
+   938→      toast({ title: "Correlation failed", description: data.error, variant: "destructive" });
+   939→    }
+   940→  }, [alloc, runCorrelationWith]);
+   941→
+   942→  // ---------- Push notifications ----------
+   943→  const requestNotifPermission = useCallback(async () => {
+   944→    if (typeof Notification === "undefined") {
+   945→      toast({ title: "Not supported", description: "Your browser doesn't support notifications", variant: "destructive" });
+   946→      return;
+   947→    }
+   948→    const perm = await Notification.requestPermission();
+   949→    setNotifPermission(perm);
+   950→    if (perm === "granted") {
+   951→      toast({ title: "Notifications enabled", description: "You'll be pinged when any holding hits EXIT or WATCH status" });
+   952→      new Notification("Nifty Momentum Tracker", {
+   953→        body: "✅ Notifications enabled. We'll alert you when holdings need attention.",
+   954→      });
+   955→    } else {
+   956→      toast({ title: "Permission denied", description: "Enable notifications in browser settings to receive alerts", variant: "destructive" });
+   957→    }
+   958→  }, []);
+   959→
+   960→  const fireNotificationsIfAlert = useCallback((stopsData: StopsResponse) => {
+   961→    if (typeof Notification === "undefined") return;
+   962→    if (Notification.permission !== "granted") return;
+   963→    const alerts = stopsData.stops.filter((s) => s.status === "EXIT" || s.status === "WATCH");
+   964→    if (alerts.length === 0) return;
+   965→    // Build hash to dedupe (don't fire same alert twice in a row)
+   966→    const hash = alerts.map((a) => `${a.symbol}:${a.status}`).sort().join("|");
+   967→    if (hash === lastAlertedRef.current) return;
+   968→    lastAlertedRef.current = hash;
+   969→    const exitCount = alerts.filter((a) => a.status === "EXIT").length;
+   970→    const watchCount = alerts.filter((a) => a.status === "WATCH").length;
+   971→    const title = exitCount > 0 ? `🚨 ${exitCount} EXIT signal${exitCount > 1 ? "s" : ""}` : `⚠ ${watchCount} stock${watchCount > 1 ? "s" : ""} on WATCH`;
+   972→    const body = alerts
+   973→      .slice(0, 5)
+   974→      .map((a) => `${a.symbol}: ${a.status} (${a.pnlPct > 0 ? "+" : ""}${a.pnlPct.toFixed(1)}% — ${a.reasons || "healthy"})`)
+   975→      .join("\n");
+   976→    new Notification(title, { body, tag: "nifty-alert", requireInteraction: exitCount > 0 });
+   977→  }, []);
+   978→
+   979→  // Helpers that accept an explicit allocation (used by auto-refresh chain)
+   980→  const runStopsWith = useCallback(async (allocArg: AllocateResponse, silent = false) => {
+   981→    setRunning("stops");
+   982→    try {
+   983→      const res = await fetch("/api/stops", {
+   984→        method: "POST",
+   985→        headers: { "Content-Type": "application/json" },
+   986→        body: JSON.stringify({ allocation: allocArg.allocation }),
+   987→      });
+   988→      if (!res.ok) throw new Error("Stop-loss fetch failed");
+   989→      const data: StopsResponse = await res.json();
+   990→      setStops(data);
+   991→      return data;
+   992→    } catch {
+   993→      return null;
+   994→    } finally {
+   995→      setRunning(null);
+   996→    }
+   997→  }, []);
+   998→
+   999→  const runStressWith = useCallback(async (allocArg: AllocateResponse, silent = false) => {
+  1000→    try {
+  1001→      const res = await fetch("/api/stress", {
+  1002→        method: "POST",
+  1003→        headers: { "Content-Type": "application/json" },
+  1004→        body: JSON.stringify({ allocation: allocArg.allocation, totalInvested: allocArg.totalInvested }),
+  1005→      });
+  1006→      if (!res.ok) throw new Error("Stress test failed");
+  1007→      const data: StressResponse = await res.json();
+  1008→      setStress(data);
+  1009→      return data;
+  1010→    } catch {
+  1011→      return null;
+  1012→    }
+  1013→  }, []);
+  1014→
+  1015→  // When auto-refresh is toggled on, schedule the first run + start countdown ticker
+  1016→  useEffect(() => {
+  1017→    if (!autoRefreshOn) {
+  1018→      setNextRunAt(null);
+  1019→      setCountdown("");
+  1020→      if (tickerRef.current) {
+  1021→        clearInterval(tickerRef.current);
+  1022→        tickerRef.current = null;
+  1023→      }
+  1024→      return;
+  1025→    }
+  1026→    // Schedule first auto-run
+  1027→    setNextRunAt(Date.now() + autoRefreshMin * 60 * 1000);
+  1028→
+  1029→    // Ticker: every 1s update countdown and trigger refresh when due
+  1030→    tickerRef.current = setInterval(() => {
+  1031→      const target = Date.now() + autoRefreshMin * 60 * 1000;
+  1032→      setNextRunAt((prev) => {
+  1033→        const target = prev ?? Date.now();
+  1034→        const remaining = target - Date.now();
+  1035→        if (remaining <= 0) {
+  1036→          // trigger auto-refresh (don't await inside setInterval)
+  1037→          runAutoRefresh();
+  1038→          return Date.now() + autoRefreshMin * 60 * 1000;
+  1039→        }
+  1040→        return prev;
+  1041→      });
+  1042→    }, 1000);
+  1043→
+  1044→    return () => {
+  1045→      if (tickerRef.current) {
+  1046→        clearInterval(tickerRef.current);
+  1047→        tickerRef.current = null;
+  1048→      }
+  1049→    };
+  1050→  }, [autoRefreshOn, autoRefreshMin, runAutoRefresh]);
+  1051→
+  1052→  // Update countdown display every second
+  1053→  useEffect(() => {
+  1054→    if (!autoRefreshOn || !nextRunAt) {
+  1055→      setCountdown("");
+  1056→      return;
+  1057→    }
+  1058→    const tick = () => {
+  1059→      const remaining = nextRunAt - Date.now();
+  1060→      if (remaining <= 0) {
+  1061→        setCountdown("refreshing…");
+  1062→        return;
+  1063→      }
+  1064→      const mins = Math.floor(remaining / 60000);
+  1065→      const secs = Math.floor((remaining % 60000) / 1000);
+  1066→      setCountdown(`${mins}m ${secs.toString().padStart(2, "0")}s`);
+  1067→    };
+  1068→    tick();
+  1069→    const id = setInterval(tick, 1000);
+  1070→    return () => clearInterval(id);
+  1071→  }, [autoRefreshOn, nextRunAt]);
+  1072→
+  1073→  return (
+  1074→    <div className="min-h-screen bg-background flex flex-col">
+  1075→      {/* Header — compact */}
+  1076→      <header className="border-b border-border/60 bg-card/80 backdrop-blur-md sticky top-0 z-20">
+  1077→        <div className="max-w-7xl mx-auto px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2">
+  1078→          <div className="flex items-center gap-2 min-w-0">
+  1079→            <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-primary-foreground shadow-sm shrink-0">
+  1080→              <TrendingUp className="w-4 h-4" />
+  1081→            </div>
+  1082→            <div className="min-w-0">
+  1083→              <h1 className="text-sm font-bold text-foreground truncate">Nifty Momentum Tracker</h1>
+  1084→              <p className="text-[10px] text-muted-foreground leading-tight truncate">
+  1085→                High Relative Strength · Strong Trend
+  1086→              </p>
+  1087→            </div>
+  1088→          </div>
+  1089→          <div className="flex items-center gap-1.5">
+  1090→            <Badge variant="outline" className="pastel-positive text-[10px] px-1.5 py-0 h-5 font-medium hidden sm:inline-flex">
+  1091→              <Activity className="w-2.5 h-2.5 mr-1" />
+  1092→              {running === "screen" && !screen
+  1093→                ? `Loading ${elapsedMs ? (elapsedMs / 1000).toFixed(0) : 0}s…`
+  1094→                : screen
+  1095→                  ? fmtISTTime(screen.runAt)
+  1096→                  : "—"}
+  1097→            </Badge>
+  1098→            {autoRefreshOn && (
+  1099→              <Badge variant="outline" className="pastel-info text-[10px] px-1.5 py-0 h-5 font-medium tabular-nums">
+  1100→                <Clock className="w-2.5 h-2.5 mr-1" /> {countdown}
+  1101→              </Badge>
+  1102→            )}
+  1103→            <Button
+  1104→              variant={notifPermission === "granted" ? "default" : "outline"}
+  1105→              size="sm"
+  1106→              onClick={requestNotifPermission}
+  1107→              disabled={notifPermission === "granted" || notifPermission === "unsupported" || notifPermission === "denied"}
+  1108→              suppressHydrationWarning
+  1109→              className="h-7 px-2 text-[11px]"
+  1110→            >
+  1111→              {notifPermission === "granted" ? <BellRing className="w-3 h-3 sm:mr-1" /> : <Bell className="w-3 h-3 sm:mr-1" />}
+  1112→              <span suppressHydrationWarning className="hidden sm:inline">
+  1113→                {notifPermission === "granted" ? "On" : notifPermission === "denied" ? "Blocked" : notifPermission === "unsupported" ? "N/A" : "Alerts"}
+  1114→              </span>
+  1115→            </Button>
+  1116→            {/* Zerodha connect button — opens dialog with OAuth + manual token options */}
+  1117→            <Button
+  1118→              variant="outline"
+  1119→              size="sm"
+  1120→              className="h-7 px-2 text-[11px] gap-1"
+  1121→              onClick={() => setShowZerodhaDialog(true)}
+  1122→            >
+  1123→              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+  1124→                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" strokeLinecap="round" strokeLinejoin="round"/>
+  1125→              </svg>
+  1126→              <span className="hidden sm:inline">Zerodha</span>
+  1127→            </Button>
+  1128→            <Popover>
+  1129→              <PopoverTrigger asChild>
+  1130→                <Button variant={autoRefreshOn ? "default" : "outline"} size="sm" className="h-7 px-2 text-[11px]">
+  1131→                  <Timer className="w-3 h-3 sm:mr-1" />
+  1132→                  <span className="hidden sm:inline">{autoRefreshOn ? `${autoRefreshMin}m` : "Auto"}</span>
+  1133→                </Button>
+  1134→              </PopoverTrigger>
+  1135→              <PopoverContent className="w-72" align="end">
+  1136→                <div className="space-y-3">
+  1137→                  <div className="flex items-center justify-between">
+  1138→                    <Label htmlFor="auto-toggle" className="text-sm font-medium">Auto-refresh</Label>
+  1139→                    <Switch id="auto-toggle" checked={autoRefreshOn} onCheckedChange={setAutoRefreshOn} />
+  1140→                  </div>
+  1141→                  <div className="space-y-1">
+  1142→                    <Label className="text-xs text-muted-foreground">Interval</Label>
+  1143→                    <Select value={String(autoRefreshMin)} onValueChange={(v) => setAutoRefreshMin(Number(v))}>
+  1144→                      <SelectTrigger><SelectValue /></SelectTrigger>
+  1145→                      <SelectContent>
+  1146→                        {AUTO_REFRESH_OPTIONS.map((o) => (
+  1147→                          <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
+  1148→                        ))}
+  1149→                      </SelectContent>
+  1150→                    </Select>
+  1151→                  </div>
+  1152→                  <p className="text-xs text-muted-foreground">
+  1153→                    Re-fetches live Top 10, re-allocates capital, refreshes stop-loss every {autoRefreshMin} min. Stress + correlation also re-run if open.
+  1154→                  </p>
+  1155→                  {autoRefreshOn && nextRunAt && (
+  1156→                    <p className="text-xs text-primary font-medium">
+  1157→                      Next refresh at {fmtISTTime(nextRunAt)}
+  1158→                    </p>
+  1159→                  )}
+  1160→                </div>
+  1161→              </PopoverContent>
+  1162→            </Popover>
+  1163→            {/* Screen mode toggle: Momentum vs Pullback Bridge */}
+  1164→            <div className="flex items-center rounded-md border border-border/60 overflow-hidden">
+  1165→              <button
+  1166→                onClick={() => {
+  1167→                  if (screenMode !== "momentum") {
+  1168→                    setScreenMode("momentum");
+  1169→                    setScreen(null);
+  1170→                    screenRef.current = null;
+  1171→                  }
+  1172→                }}
+  1173→                className={`px-2 py-1 text-[10px] font-medium transition-colors ${screenMode === "momentum" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+  1174→              >
+  1175→                Momentum
+  1176→              </button>
+  1177→              <button
+  1178→                onClick={() => {
+  1179→                  if (screenMode !== "bridge") {
+  1180→                    setScreenMode("bridge");
+  1181→                    setScreen(null);
+  1182→                    screenRef.current = null;
+  1183→                  }
+  1184→                }}
+  1185→                className={`px-2 py-1 text-[10px] font-medium transition-colors ${screenMode === "bridge" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+  1186→              >
+  1187→                Bridge
+  1188→              </button>
+  1189→            </div>
+  1190→            <Button onClick={() => runScreen(false)} disabled={running === "screen"} size="sm" className="h-7 px-2.5 text-[11px]">
+  1191→              <RefreshCw className={`w-3 h-3 sm:mr-1 ${running === "screen" ? "animate-spin" : ""}`} />
+  1192→              <span className="hidden sm:inline">{running === "screen" ? "Running…" : screenMode === "bridge" ? "Run Bridge" : "Run Screen"}</span>
+  1193→            </Button>
+  1194→            {/* Publish to Live — pushes screen results to GitHub for Vercel */}
+  1195→            {screen && screen.top10.length > 0 && (
+  1196→              <Button onClick={publishToLive} disabled={publishing} size="sm" variant="outline" className="h-7 px-2.5 text-[11px] border-emerald-300 text-emerald-700 hover:bg-emerald-50" title="Publish current screen results to the live Vercel app">
+  1197→                {publishing ? <RefreshCw className="w-3 h-3 sm:mr-1 animate-spin" /> : <TrendingUp className="w-3 h-3 sm:mr-1" />}
+  1198→                <span className="hidden sm:inline">{publishing ? "Publishing…" : "Publish to Live"}</span>
+  1199→              </Button>
+  1200→            )}
+  1201→            {/* Refresh Prices — fetch live LTP for all screened stocks */}
+  1202→            {screen && screen.top10.length > 0 && (
+  1203→              <Button onClick={refreshPrices} disabled={refreshingPrices} size="sm" variant="outline" className="h-7 px-2.5 text-[11px] border-blue-300 text-blue-700 hover:bg-blue-50" title="Refresh live prices for all stocks without re-running the full screen">
+  1204→                {refreshingPrices ? <RefreshCw className="w-3 h-3 sm:mr-1 animate-spin" /> : <Activity className="w-3 h-3 sm:mr-1" />}
+  1205→                <span className="hidden sm:inline">{refreshingPrices ? "Refreshing…" : "Refresh Prices"}</span>
+  1206→              </Button>
+  1207→            )}
+  1208→            {/* Top N selector — pick portfolio size (5/10/15/20/25/30 stocks) */}
+  1209→            <div className="flex items-center gap-1">
+  1210→              <Label htmlFor="topn-select" className="text-[10px] text-muted-foreground hidden sm:inline">Top</Label>
+  1211→              <Select value={String(topN)} onValueChange={(v) => {
+  1212→                const newN = Number(v);
+  1213→                setTopN(newN);
+  1214→                // Auto-run screen with new N if user has already run it once
+  1215→                if (screen) {
+  1216→                  toast({ title: `Switching to Top ${newN}`, description: "Re-running screen…" });
+  1217→                  runScreen(false, newN);
+  1218→                }
+  1219→              }}>
+  1220→                <SelectTrigger id="topn-select" className="h-7 w-[52px] text-[11px] px-1.5 py-0 gap-0.5">
+  1221→                  <SelectValue />
+  1222→                </SelectTrigger>
+  1223→                <SelectContent>
+  1224→                  {[5, 10, 15, 20, 25, 30].map((n) => (
+  1225→                    <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+  1226→                  ))}
+  1227→                </SelectContent>
+  1228→              </Select>
+  1229→              <Label htmlFor="topn-select" className="text-[10px] text-muted-foreground hidden sm:inline">stocks</Label>
+  1230→            </div>
+  1231→            {/* Filters popover — adjustable RSI, MCap, Vol thresholds */}
+  1232→            <Popover>
+  1233→              <PopoverTrigger asChild>
+  1234→                <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]">
+  1235→                  <SlidersHorizontal className="w-3 h-3 sm:mr-1" />
+  1236→                  <span className="hidden sm:inline">Filters</span>
+  1237→                </Button>
+  1238→              </PopoverTrigger>
+  1239→              <PopoverContent className="w-80" align="end">
+  1240→                <div className="space-y-4">
+  1241→                  <div>
+  1242→                    <div className="flex items-center justify-between mb-1">
+  1243→                      <Label className="text-xs font-medium">Min RSI(14)</Label>
+  1244→                      <span className="text-xs font-bold tabular-nums text-primary">{filters.rsiMin}</span>
+  1245→                    </div>
+  1246→                    <input
+  1247→                      type="range" min={40} max={70} step={5}
+  1248→                      value={filters.rsiMin}
+  1249→                      onChange={(e) => setFilters({ ...filters, rsiMin: Number(e.target.value) })}
+  1250→                      className="w-full accent-primary"
+  1251→                    />
+  1252→                    <div className="flex justify-between text-[9px] text-muted-foreground">
+  1253→                      <span>40 (loose)</span>
+  1254→                      <span>55 (original)</span>
+  1255→                      <span>70 (strict)</span>
+  1256→                    </div>
+  1257→                  </div>
+  1258→                  <div>
+  1259→                    <div className="flex items-center justify-between mb-1">
+  1260→                      <Label className="text-xs font-medium">Min Market Cap (₹ Cr)</Label>
+  1261→                      <span className="text-xs font-bold tabular-nums text-primary">₹{filters.mcapMin}</span>
+  1262→                    </div>
+  1263→                    <input
+  1264→                      type="range" min={100} max={2000} step={100}
+  1265→                      value={filters.mcapMin}
+  1266→                      onChange={(e) => setFilters({ ...filters, mcapMin: Number(e.target.value) })}
+  1267→                      className="w-full accent-primary"
+  1268→                    />
+  1269→                    <div className="flex justify-between text-[9px] text-muted-foreground">
+  1270→                      <span>₹100</span>
+  1271→                      <span>₹500 (orig)</span>
+  1272→                      <span>₹2,000</span>
+  1273→                    </div>
+  1274→                  </div>
+  1275→                  <div>
+  1276→                    <div className="flex items-center justify-between mb-1">
+  1277→                      <Label className="text-xs font-medium">Min 30D Avg Volume</Label>
+  1278→                      <span className="text-xs font-bold tabular-nums text-primary">{filters.volMin.toLocaleString("en-IN")}</span>
+  1279→                    </div>
+  1280→                    <input
+  1281→                      type="range" min={10000} max={100000} step={5000}
+  1282→                      value={filters.volMin}
+  1283→                      onChange={(e) => setFilters({ ...filters, volMin: Number(e.target.value) })}
+  1284→                      className="w-full accent-primary"
+  1285→                    />
+  1286→                    <div className="flex justify-between text-[9px] text-muted-foreground">
+  1287→                      <span>10k</span>
+  1288→                      <span>50k (orig)</span>
+  1289→                      <span>100k</span>
+  1290→                    </div>
+  1291→                  </div>
+  1292→                  <div className="flex gap-2 pt-2 border-t border-border/40">
+  1293→                    <Button
+  1294→                      size="sm"
+  1295→                      className="h-7 flex-1 text-[11px]"
+  1296→                      onClick={() => {
+  1297→                        setFilters({ rsiMin: 50, mcapMin: 200, volMin: 20000 });
+  1298→                        toast({ title: "Reset to loosened defaults", description: "RSI>50, MCap>₹200Cr, Vol>20k" });
+  1299→                      }}
+  1300→                      variant="outline"
+  1301→                    >
+  1302→                      Reset defaults
+  1303→                    </Button>
+  1304→                    <Button
+  1305→                      size="sm"
+  1306→                      className="h-7 flex-1 text-[11px]"
+  1307→                      onClick={() => {
+  1308→                        setFilters({ rsiMin: 55, mcapMin: 500, volMin: 50000 });
+  1309→                        toast({ title: "Restored original strategy", description: "RSI>55, MCap>₹500Cr, Vol>50k" });
+  1310→                      }}
+  1311→                      variant="outline"
+  1312→                    >
+  1313→                      Original (strict)
+  1314→                    </Button>
+  1315→                  </div>
+  1316→                  <Button
+  1317→                    size="sm"
+  1318→                    className="h-8 w-full text-[11px]"
+  1319→                    onClick={() => runScreen(false, undefined, filters)}
+  1320→                    disabled={running === "screen"}
+  1321→                  >
+  1322→                    <RefreshCw className={`w-3 h-3 mr-1.5 ${running === "screen" ? "animate-spin" : ""}`} />
+  1323→                    Apply &amp; Re-run Screen
+  1324→                  </Button>
+  1325→                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+  1326→                    Loosened defaults (RSI&gt;50, MCap&gt;₹200Cr, Vol&gt;20k) typically yield 25-30 qualifiers from the 511-stock universe.
+  1327→                    Original strategy rules (RSI&gt;55, MCap&gt;₹500Cr, Vol&gt;50k) typically yield 10-12.
+  1328→                  </p>
+  1329→                </div>
+  1330→              </PopoverContent>
+  1331→            </Popover>
+  1332→          </div>
+  1333→        </div>
+  1334→      </header>
+  1335→
+  1336→      {/* Desktop / tablet nav — top tabs, icon + label, hidden on mobile */}
+  1337→      <nav className="hidden sm:block border-b border-border/60 bg-card/40 sticky top-[49px] z-10">
+  1338→        <div className="max-w-7xl mx-auto px-3 sm:px-5">
+  1339→          <Tabs value={tab} onValueChange={setTab} className="w-full">
+  1340→            <TabsList className="grid w-full grid-cols-7 h-9 bg-transparent p-0 rounded-none border-b-0">
+  1341→              <TabsTrigger value="screen" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+  1342→                <Target className="w-3.5 h-3.5" /> Screen
+  1343→              </TabsTrigger>
+  1344→              <TabsTrigger value="alloc" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+  1345→                <Wallet className="w-3.5 h-3.5" /> Allocation
+  1346→              </TabsTrigger>
+  1347→              <TabsTrigger value="analyze" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+  1348→                <Search className="w-3.5 h-3.5" /> Analyze
+  1349→              </TabsTrigger>
+  1350→              <TabsTrigger value="stops" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+  1351→                <ShieldAlert className="w-3.5 h-3.5" /> Stop-Loss
+  1352→              </TabsTrigger>
+  1353→              <TabsTrigger value="stress" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+  1354→                <Zap className="w-3.5 h-3.5" /> Stress
+  1355→              </TabsTrigger>
+  1356→              <TabsTrigger value="backtest" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+  1357→                <History className="w-3.5 h-3.5" /> Backtest
+  1358→              </TabsTrigger>
+  1359→              <TabsTrigger value="risk" className="gap-1 text-xs py-1.5 data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md">
+  1360→                <GitCompare className="w-3.5 h-3.5" /> Risk
+  1361→              </TabsTrigger>
+  1362→            </TabsList>
+  1363→          </Tabs>
+  1364→        </div>
+  1365→      </nav>
+  1366→
+  1367→      {/* Main content — adds bottom padding on mobile for bottom nav */}
+  1368→      <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-5 py-3 sm:py-4 pb-20 sm:pb-6">
+  1369→        <RegimeBanner regime={regime} loading={regimeLoading} error={regimeError} onRefresh={fetchRegime} />
+  1370→        <Tabs value={tab} onValueChange={setTab} className="w-full mt-3">
+  1371→          {/* ============================== Screen tab ============================== */}
+  1372→          <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
+  1373→            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} watchlist={watchlist} addToWatchlist={addToWatchlist} removeFromWatchlist={removeFromWatchlist} isInWatchlist={isInWatchlist} onAnalyzeWatchlist={(sym) => { setTab("analyze"); runAnalyze(sym); }} telegramConfig={telegramConfig} setTelegramConfig={setTelegramConfig} sendTelegramAlert={sendTelegramAlert} stabilityData={stabilityData} />
+  1374→          </TabsContent>
+  1375→
+  1376→          {/* ============================== Allocation tab ============================== */}
+  1377→          <TabsContent value="alloc">
+  1378→            <AllocationPanel
+  1379→              screen={screen}
+  1380→              alloc={alloc}
+  1381→              totalInvestment={totalInvestment}
+  1382→              setTotalInvestment={setTotalInvestment}
+  1383→              runAllocation={runAllocation}
+  1384→              allocDirty={allocDirty}
+  1385→              onGoToStops={() => setTab("stops")}
+  1386→              onGoToStress={() => setTab("stress")}
+  1387→              allocationMode={allocationMode}
+  1388→              setAllocationMode={setAllocationMode}
+  1389→              rebalance={rebalance}
+  1390→              runRebalance={runRebalance}
+  1391→              rebalanceRunning={rebalanceRunning}
+  1392→            />
+  1393→          </TabsContent>
+  1394→
+  1395→          {/* ============================== Analyze tab ============================== */}
+  1396→          <TabsContent value="analyze" className="mt-0 focus-visible:outline-none">
+  1397→            <AnalyzePanel
+  1398→              input={analyzeInput}
+  1399→              setInput={setAnalyzeInput}
+  1400→              onAnalyze={runAnalyze}
+  1401→              symbol={analyzeSymbol}
+  1402→              data={analyzeData}
+  1403→              loading={analyzeLoading}
+  1404→              error={analyzeError}
+  1405→              regime={regime}
+  1406→              suggestions={analyzeSuggestions}
+  1407→              rrOverride={rrOverride}
+  1408→              setRrOverride={setRrOverride}
+  1409→            />
+  1410→          </TabsContent>
+  1411→
+  1412→          {/* ============================== Stop-Loss tab ============================== */}
+  1413→          <TabsContent value="stops">
+  1414→            <StopLossPanel stops={stops} running={running === "stops"} onRefresh={runStops} hasAlloc={!!alloc} onGoToAlloc={() => setTab("alloc")} />
+  1415→          </TabsContent>
+  1416→
+  1417→          {/* ============================== Stress tab ============================== */}
+  1418→          <TabsContent value="stress">
+  1419→            <StressPanel stress={stress} onRun={runStress} hasAlloc={!!alloc} onGoToAlloc={() => setTab("alloc")} />
+  1420→          </TabsContent>
+  1421→
+  1422→          {/* ============================== Backtest tab ============================== */}
+  1423→          <TabsContent value="backtest">
+  1424→            <BacktestPanel backtest={backtest} running={backtestRunning} onRun={runBacktest} />
+  1425→          </TabsContent>
+  1426→
+  1427→          {/* ============================== Risk tab ============================== */}
+  1428→          <TabsContent value="risk">
+  1429→            <RiskPanel
+  1430→              correlation={correlation}
+  1431→              running={correlationRunning}
+  1432→              onRun={runCorrelation}
+  1433→              hasAlloc={!!alloc}
+  1434→              onGoToAlloc={() => setTab("alloc")}
+  1435→            />
+  1436→          </TabsContent>
+  1437→        </Tabs>
+  1438→      </main>
+  1439→
+  1440→      {/* Zerodha Connect Dialog */}
+  1441→      {showZerodhaDialog && (
+  1442→        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowZerodhaDialog(false)}>
+  1443→          <div className="bg-card rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+  1444→            <h2 className="text-lg font-bold mb-1">Connect Zerodha</h2>
+  1445→            <p className="text-xs text-muted-foreground mb-4">
+  1446→              Connect your Zerodha account for real-time data, no rate limits, and live portfolio sync.
+  1447→            </p>
+  1448→
+  1449→            {kiteConnected ? (
+  1450→              <div className="text-center py-4">
+  1451→                <div className="text-2xl mb-2">✅</div>
+  1452→                <p className="text-sm font-medium text-emerald-600">Connected to Zerodha!</p>
+  1453→                <Button variant="outline" size="sm" className="mt-3" onClick={() => setShowZerodhaDialog(false)}>
+  1454→                  Close
+  1455→                </Button>
+  1456→              </div>
+  1457→            ) : (
+  1458→              <div className="space-y-4">
+  1459→                {/* Option 1: OAuth login */}
+  1460→                <div>
+  1461→                  <a href="/api/zerodha/login">
+  1462→                    <Button className="w-full" variant="default">
+  1463→                      Login with Zerodha
+  1464→                    </Button>
+  1465→                  </a>
+  1466→                  <p className="text-[10px] text-muted-foreground mt-1 text-center">
+  1467→                    Redirects to Zerodha login page
+  1468→                  </p>
+  1469→                </div>
+  1470→
+  1471→                <div className="flex items-center gap-2">
+  1472→                  <div className="flex-1 h-px bg-border/40" />
+  1473→                  <span className="text-[10px] text-muted-foreground">OR</span>
+  1474→                  <div className="flex-1 h-px bg-border/40" />
+  1475→                </div>
+  1476→
+  1477→                {/* Option 2: Manual — paste the full redirect URL or just the token */}
+  1478→                <div>
+  1479→                  <Label className="text-xs font-medium">Manual: Paste URL or Token</Label>
+  1480→                  <p className="text-[10px] text-muted-foreground mb-2">
+  1481→                    1. Click this link:{" "}
+  1482→                    <a href="https://kite.zerodha.com/connect/login?api_key=mrotfrt78mmjv00p&v=3" target="_blank" className="text-primary underline">
+  1483→                      Open Zerodha Login
+  1484→                    </a><br />
+  1485→                    2. Log in and authorize<br />
+  1486→                    3. Copy the ENTIRE URL from the address bar (even if it shows an error page)<br />
+  1487→                    4. Paste it below
+  1488→                  </p>
+  1489→                  <Input
+  1490→                    placeholder="Paste the full URL here..."
+  1491→                    value={kiteToken}
+  1492→                    onChange={(e) => setKiteToken(e.target.value)}
+  1493→                    className="text-xs"
+  1494→                  />
+  1495→                  <Button
+  1496→                    className="w-full mt-2"
+  1497→                    variant="outline"
+  1498→                    size="sm"
+  1499→                    disabled={!kiteToken.trim() || kiteConnecting}
+  1500→                    onClick={async () => {
+  1501→                      setKiteConnecting(true);
+  1502→                      try {
+  1503→                        // Extract request_token from URL or use as-is
+  1504→                        let token = kiteToken.trim();
+  1505→                        if (token.includes("request_token=")) {
+  1506→                          try {
+  1507→                            const url = new URL(token);
+  1508→                            token = url.searchParams.get("request_token") || token;
+  1509→                          } catch {
+  1510→                            // Not a valid URL, try regex
+  1511→                            const match = token.match(/request_token=([^&]+)/);
+  1512→                            if (match) token = match[1];
+  1513→                          }
+  1514→                        }
+  1515→
+  1516→                        const res = await fetch("/api/zerodha/token", {
+  1517→                          method: "POST",
+  1518→                          headers: { "Content-Type": "application/json" },
+  1519→                          body: JSON.stringify({ request_token: token }),
+  1520→                        });
+  1521→                        if (res.ok) {
+  1522→                          const data = await res.json();
+  1523→                          if (data?.access_token) {
+  1524→                            try { localStorage.setItem("kite_access_token", data.access_token); } catch {}
+  1525→                            kiteAccessTokenRef.current = data.access_token;
+  1526→                          }
+  1527→                          setKiteConnected(true);
+  1528→                          toast({ title: "Connected to Zerodha!", description: "You can now use Zerodha data source" });
+  1529→                          setTimeout(() => fetchRegime(), 500);
+  1530→                        } else {
+  1531→                          const err = await res.json();
+  1532→                          toast({ title: "Connection failed", description: err.error || "Unknown error", variant: "destructive" });
+  1533→                        }
+  1534→                      } catch {
+  1535→                        toast({ title: "Connection failed", description: "Network error", variant: "destructive" });
+  1536→                      } finally {
+  1537→                        setKiteConnecting(false);
+  1538→                      }
+  1539→                    }}
+  1540→                  >
+  1541→                    {kiteConnecting ? "Connecting..." : "Connect"}
+  1542→                  </Button>
+  1543→                </div>
+  1544→              </div>
+  1545→            )}
+  1546→          </div>
+  1547→        </div>
+  1548→      )}
+  1549→
+  1550→      {/* Footer — desktop only */}
+  1551→      <footer className="hidden sm:block border-t border-border/60 py-3 text-center text-[10px] text-muted-foreground">
+  1552→        Live data from Yahoo Finance / Zerodha Kite · RSI(14) Wilder · Universe: Nifty Total Market · Built with Next.js 16
+  1553→      </footer>
+  1554→
+  1555→      {/* Mobile bottom nav — app-style */}
+  1556→      <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-card border-t border-border/60 backdrop-blur-md safe-area-pb">
+  1557→        <div className="grid grid-cols-7 h-14">
+  1558→          {[
+  1559→            { id: "screen", icon: Target, label: "Screen" },
+  1560→            { id: "alloc", icon: Wallet, label: "Alloc" },
+  1561→            { id: "analyze", icon: Search, label: "Analyze" },
+  1562→            { id: "stops", icon: ShieldAlert, label: "Stops" },
+  1563→            { id: "stress", icon: Zap, label: "Stress" },
+  1564→            { id: "backtest", icon: History, label: "Btest" },
+  1565→            { id: "risk", icon: GitCompare, label: "Risk" },
+  1566→          ].map((t) => {
+  1567→            const Icon = t.icon;
+  1568→            const active = tab === t.id;
+  1569→            return (
+  1570→              <button
+  1571→                key={t.id}
+  1572→                onClick={() => setTab(t.id)}
+  1573→                className={`flex flex-col items-center justify-center gap-0.5 transition-colors ${active ? "text-primary" : "text-muted-foreground"}`}
+  1574→              >
+  1575→                <Icon className={`w-4 h-4 ${active ? "stroke-[2.5]" : ""}`} />
+  1576→                <span className={`text-[9px] ${active ? "font-semibold" : ""}`}>{t.label}</span>
+  1577→                {active && <div className="absolute top-0 w-8 h-0.5 bg-primary rounded-full" />}
+  1578→              </button>
+  1579→            );
+  1580→          })}
+  1581→        </div>
+  1582→      </nav>
+  1583→    </div>
+  1584→  );
+  1585→}
+  1586→
+  1587→/* ---------------------------------------------------------------- Phase 1 components */
+  1588→const RR_PRESETS: Record<SetupType, { t1: number; t2: number }> = {
+  1589→  BREAKOUT:     { t1: 1.5, t2: 3.0 },
+  1590→  PULLBACK:     { t1: 1.5, t2: 2.5 },
+  1591→  EXTENDED:     { t1: 1.0, t2: 2.0 },
+  1592→  DISTRIBUTION: { t1: 0.7, t2: 1.5 },
+  1593→  TIGHTENING:   { t1: 1.5, t2: 2.5 },
+  1594→  UPTREND:      { t1: 1.5, t2: 2.8 },
+  1595→};
+  1596→
+  1597→function getRRForSetup(setupType: SetupType, override?: { t1: number; t2: number } | null): { t1: number; t2: number } {
+  1598→  if (override && override.t1 > 0 && override.t2 > 0) return override;
+  1599→  return RR_PRESETS[setupType] ?? RR_PRESETS.UPTREND;
+  1600→}
+  1601→
+  1602→const SETUP_META: Record<SetupType, { emoji: string; label: string; cls: string }> = {
+  1603→  BREAKOUT:     { emoji: "🟢", label: "Breakout",     cls: "pastel-positive" },
+  1604→  PULLBACK:     { emoji: "🔵", label: "Pullback",     cls: "pastel-info" },
+  1605→  TIGHTENING:   { emoji: "🟡", label: "Tightening",   cls: "pastel-warning" },
+  1606→  EXTENDED:     { emoji: "🟠", label: "Extended",     cls: "pastel-peach" },
+  1607→  DISTRIBUTION: { emoji: "🔴", label: "Distribution", cls: "pastel-negative" },
+  1608→  UPTREND:      { emoji: "⚪", label: "Uptrend",      cls: "bg-muted text-muted-foreground" },
+  1609→};
+  1610→
+  1611→function SetupBadge({ type, grade }: { type: SetupType; grade?: SetupGrade }) {
+  1612→  const m = SETUP_META[type] ?? SETUP_META.UPTREND;
+  1613→  const gradeCls = grade === "A+" ? "pastel-positive"
+  1614→    : grade === "A" ? "pastel-info"
+  1615→    : grade === "B" ? "pastel-warning"
+  1616→    : "bg-muted text-muted-foreground";
+  1617→  return (
+  1618→    <div className="flex items-center gap-1">
+  1619→      <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold ${m.cls}`}>
+  1620→        <span className="text-[9px]">{m.emoji}</span>{m.label}
+  1621→      </span>
+  1622→      {grade && (
+  1623→        <span className={`inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold tabular-nums ${gradeCls}`}>{grade}</span>
+  1624→      )}
+  1625→    </div>
+  1626→  );
+  1627→}
+  1628→
+  1629→function SignalScoreBadge({ score }: { score: number }) {
+  1630→  if (isNaN(score)) return <span className="text-muted-foreground">—</span>;
+  1631→  const cls = score >= 80 ? "pastel-positive"
+  1632→    : score >= 65 ? "pastel-info"
+  1633→    : score >= 50 ? "pastel-warning"
+  1634→    : "bg-muted text-muted-foreground";
+  1635→  return <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums ${cls}`}>{score.toFixed(0)}</span>;
+  1636→}
+  1637→
+  1638→function VolMultBadge({ mult, tag }: { mult: number; tag?: "ACCUM" | "DIST" | "NEUTRAL" }) {
+  1639→  if (isNaN(mult)) return <span className="text-muted-foreground">—</span>;
+  1640→  const tagCls = tag === "ACCUM" ? "pastel-positive" : tag === "DIST" ? "pastel-negative" : "bg-muted text-muted-foreground";
+  1641→  return (
+  1642→    <div className="flex flex-col items-end gap-0.5">
+  1643→      <span className="text-[10px] font-semibold tabular-nums">{mult.toFixed(1)}×</span>
+  1644→      {tag && <span className={`inline-flex items-center px-1 py-0 rounded text-[8px] font-bold ${tagCls}`}>{tag}</span>}
+  1645→    </div>
+  1646→  );
+  1647→}
+  1648→
+  1649→function tradePlanRationale(s: ScreenedStock): string {
+  1650→  const parts: string[] = [];
+  1651→  switch (s.setupType) {
+  1652→    case "BREAKOUT":
+  1653→      parts.push(`Price broke above the 20-day high on ${s.volMult.toFixed(1)}× average volume — institutional accumulation likely.`);
+  1654→      break;
+  1655→    case "PULLBACK":
+  1656→      parts.push(`Uptrend intact (price > 50DMA > 200DMA) with a healthy pullback to the 20DMA. RSI ${s.rsi14.toFixed(0)} is in the buy zone (40–60).`);
+  1657→      break;
+  1658→    case "TIGHTENING":
+  1659→      parts.push(`Bollinger Band width is in the bottom ${s.bbWidth6mPct.toFixed(0)}% of its 6-month range — volatility contraction often precedes expansion.`);
+  1660→      break;
+  1661→    case "EXTENDED":
+  1662→      parts.push(`RSI ${s.rsi14.toFixed(0)} or % above 20DMA (${s.pctAbove20dma.toFixed(1)}%) signals overbought conditions. Wait for pullback.`);
+  1663→      break;
+  1664→    case "DISTRIBUTION":
+  1665→      parts.push(`Heavy volume on a down bar with RSI ${s.rsi14.toFixed(0)} — distribution pattern. Avoid new entries; existing holders should tighten stops.`);
+  1666→      break;
+  1667→    case "UPTREND":
+  1668→    default:
+  1669→      parts.push(`Steady uptrend with price above key moving averages. Trend-following entry on dips.`);
+  1670→      break;
+  1671→  }
+  1672→  if (s.vsaTag === "ACCUM") parts.push("VSA: accumulation volume today.");
+  1673→  if (s.vsaTag === "DIST") parts.push("VSA: distribution volume today.");
+  1674→  return parts.join(" ");
+  1675→}
+  1676→
+  1677→function TradePlanSettings({ override, setOverride }: { override: { t1: number; t2: number } | null; setOverride: (v: { t1: number; t2: number } | null) => void }) {
+  1678→  const isOverride = override !== null;
+  1679→  const t1 = override?.t1 ?? 1.5;
+  1680→  const t2 = override?.t2 ?? 2.5;
+  1681→  // Expectancy blend (assumes 50% T1 hit, 30% T2 hit, 20% stopped) — rough teaching heuristic
+  1682→  const blended = (0.5 * t1 + 0.3 * t2 - 0.2 * 1).toFixed(2);
+  1683→  return (
+  1684→    <div className="rounded-lg border border-border/60 bg-muted/40 p-3 space-y-3">
+  1685→      <div className="flex items-center justify-between">
+  1686→        <Label className="text-xs font-semibold flex items-center gap-1.5">
+  1687→          <SlidersHorizontal className="w-3 h-3" /> R:R Settings
+  1688→        </Label>
+  1689→        <Button
+  1690→          variant={isOverride ? "default" : "outline"}
+  1691→          size="sm"
+  1692→          className="h-6 px-2 text-[10px]"
+  1693→          onClick={() => setOverride(isOverride ? null : { t1: 1.5, t2: 2.5 })}
+  1694→        >
+  1695→          {isOverride ? "✓ Override globally" : "Override globally"}
+  1696→        </Button>
+  1697→      </div>
+  1698→      <div className="grid grid-cols-2 gap-3">
+  1699→        <div>
+  1700→          <div className="flex items-center justify-between mb-1">
+  1701→            <Label className="text-[10px] text-muted-foreground">Target 1 (R)</Label>
+  1702→            <span className="text-[10px] font-bold tabular-nums text-primary">{t1.toFixed(1)}R</span>
+  1703→          </div>
+  1704→          <input
+  1705→            type="range" min={0.5} max={3.0} step={0.1}
+  1706→            value={t1}
+  1707→            disabled={!isOverride}
+  1708→            onChange={(e) => setOverride({ t1: Number(e.target.value), t2 })}
+  1709→            className="w-full accent-primary disabled:opacity-40"
+  1710→          />
+  1711→        </div>
+  1712→        <div>
+  1713→          <div className="flex items-center justify-between mb-1">
+  1714→            <Label className="text-[10px] text-muted-foreground">Target 2 (R)</Label>
+  1715→            <span className="text-[10px] font-bold tabular-nums text-primary">{t2.toFixed(1)}R</span>
+  1716→          </div>
+  1717→          <input
+  1718→            type="range" min={1.0} max={5.0} step={0.1}
+  1719→            value={t2}
+  1720→            disabled={!isOverride}
+  1721→            onChange={(e) => setOverride({ t1, t2: Number(e.target.value) })}
+  1722→            className="w-full accent-primary disabled:opacity-40"
+  1723→          />
+  1724→        </div>
+  1725→      </div>
+  1726→      <div className="flex items-center justify-between text-[10px]">
+  1727→        <span className="text-muted-foreground">
+  1728→          {isOverride ? "Applying to all setups" : "Using per-setup presets (Breakout 1.5/3.0, Pullback 1.5/2.5, …)"}
+  1729→        </span>
+  1730→        <span className="font-semibold text-foreground">Blended expectancy: <span className="text-primary tabular-nums">{blended}R</span></span>
+  1731→      </div>
+  1732→      {isOverride && (
+  1733→        <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] w-full" onClick={() => setOverride(null)}>
+  1734→          Reset to per-setup presets
+  1735→        </Button>
+  1736→      )}
+  1737→    </div>
+  1738→  );
+  1739→}
+  1740→
+  1741→function TradePlanField({ label, value, tone }: { label: string; value: string; tone?: "pos" | "neg" | "warn" | "info" | "default" }) {
+  1742→  const toneCls = tone === "pos" ? "text-emerald-700 dark:text-emerald-400"
+  1743→    : tone === "neg" ? "text-red-700 dark:text-red-400"
+  1744→    : tone === "warn" ? "text-amber-700 dark:text-amber-400"
+  1745→    : tone === "info" ? "text-blue-700 dark:text-blue-400"
+  1746→    : "text-foreground";
+  1747→  return (
+  1748→    <div className="rounded-md bg-background/60 border border-border/40 p-2">
+  1749→      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">{label}</div>
+  1750→      <div className={`text-[11px] font-semibold tabular-nums ${toneCls}`}>{value}</div>
+  1751→    </div>
+  1752→  );
+  1753→}
+  1754→
+  1755→function TradePlanCard({ stocks, regime, rrOverride, setRrOverride }: { stocks: ScreenedStock[]; regime: RegimeState | null; rrOverride: { t1: number; t2: number } | null; setRrOverride: ((v: { t1: number; t2: number } | null) => void) | null }) {
+  1756→  if (stocks.length === 0) return null;
+  1757→  const sizeMult = regime?.sizeMultiplier ?? 1;
+  1758→  const defaultRiskPerTrade = 1000; // ₹1000 risk per trade for illustration
+  1759→  return (
+  1760→    <Card className="card-pastel">
+  1761→      <CardHeader>
+  1762→        <CardTitle className="flex items-center gap-2 text-base">
+  1763→          <Target className="w-4 h-4 text-primary" /> Trade Plans — Top {stocks.length} Setups
+  1764→        </CardTitle>
+  1765→        <CardDescription>
+  1766→          Full entry / add / stop / target1 / target2 plan with regime-adjusted position sizing
+  1767→          {regime && <> · Regime size multiplier: <b className="text-foreground">{(sizeMult * 100).toFixed(0)}%</b></>}
+  1768→        </CardDescription>
+  1769→      </CardHeader>
+  1770→      <CardContent className="space-y-4">
+  1771→        {setRrOverride && <TradePlanSettings override={rrOverride} setOverride={setRrOverride} />}
+  1772→        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+  1773→          {stocks.map((s) => {
+  1774→            const rr = getRRForSetup(s.setupType, rrOverride);
+  1775→            const riskPerShare = s.entryPrice - s.stopPrice;
+  1776→            const t1 = s.entryPrice + Math.max(0, riskPerShare) * rr.t1;
+  1777→            const t2 = s.entryPrice + Math.max(0, riskPerShare) * rr.t2;
+  1778→            const rrRatio = riskPerShare > 0 ? (t2 - s.entryPrice) / riskPerShare : 0;
+  1779→            const posSize = sizeMult > 0 ? Math.round((defaultRiskPerTrade * sizeMult) / Math.max(0.01, Math.abs(riskPerShare))) : 0;
+  1780→            const riskRupees = posSize * Math.abs(riskPerShare);
+  1781→            const t2Gain = posSize * (t2 - s.entryPrice);
+  1782→            return (
+  1783→              <div key={s.symbol} className="rounded-lg border border-border/60 bg-card/60 p-3 space-y-2.5">
+  1784→                <div className="flex items-start justify-between gap-2">
+  1785→                  <div className="min-w-0">
+  1786→                    <div className="flex items-center gap-2">
+  1787→                      <span className="font-bold text-sm">{s.symbol}</span>
+  1788→                      <SetupBadge type={s.setupType} grade={s.setupGrade} />
+  1789→                    </div>
+  1790→                    <div className="text-[10px] text-muted-foreground line-clamp-1 max-w-[180px]">{s.longName}</div>
+  1791→                  </div>
+  1792→                  <div className="flex flex-col items-end shrink-0">
+  1793→                    <span className="text-[9px] text-muted-foreground">Signal</span>
+  1794→                    <SignalScoreBadge score={s.signalScore} />
+  1795→                  </div>
+  1796→                </div>
+  1797→                <div className="grid grid-cols-3 gap-1.5">
+  1798→                  <TradePlanField label="Entry" value={`₹${fmt(s.entryPrice)}`} tone="info" />
+  1799→                  <TradePlanField label="Add @20DMA" value={`₹${fmt(s.addPrice)}`} tone="default" />
+  1800→                  <TradePlanField label="Stop" value={`₹${fmt(s.stopPrice)}`} tone="neg" />
+  1801→                  <TradePlanField label="Target 1" value={`₹${fmt(t1)}`} tone="pos" />
+  1802→                  <TradePlanField label="Target 2" value={`₹${fmt(t2)}`} tone="pos" />
+  1803→                  <TradePlanField label="R:R (T2)" value={rrRatio.toFixed(1) + ":1"} tone="info" />
+  1804→                  <TradePlanField label="Pos. Size" value={`${posSize} sh`} tone="default" />
+  1805→                  <TradePlanField label="Risk ₹" value={fmtINR(riskRupees)} tone="warn" />
+  1806→                  <TradePlanField label="T2 Gain ₹" value={fmtINR(t2Gain)} tone="pos" />
+  1807→                </div>
+  1808→                <p className="text-[10px] text-muted-foreground leading-relaxed">{tradePlanRationale(s)}</p>
+  1809→              </div>
+  1810→            );
+  1811→          })}
+  1812→        </div>
+  1813→      </CardContent>
+  1814→    </Card>
+  1815→  );
+  1816→}
+  1817→
+  1818→function RegimeBanner({ regime, loading, error, onRefresh }: { regime: RegimeState | null; loading: boolean; error: string | null; onRefresh: () => void }) {
+  1819→  // Limited-data state: niftyClose === 0
+  1820→  if (!regime || regime.niftyClose === 0) {
+  1821→    return (
+  1822→      <Card className="border-amber-300/60 bg-amber-50/60 dark:bg-amber-950/20">
+  1823→        <CardContent className="p-3 flex items-center gap-3 flex-wrap">
+  1824→          <div className="w-9 h-9 rounded-lg bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center shrink-0">
+  1825→            <AlertTriangle className="w-4 h-4 text-amber-600" />
+  1826→          </div>
+  1827→          <div className="flex-1 min-w-0">
+  1828→            <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+  1829→              CHOP · 50% size <span className="text-[10px] font-normal opacity-80">(limited data)</span>
+  1830→            </p>
+  1831→            <p className="text-[11px] text-amber-700 dark:text-amber-300/80 mt-0.5">
+  1832→              {error ? error : "Could not fetch NIFTY data — defaulting to defensive posture. Will auto-retry every 30s."}
+  1833→            </p>
+  1834→          </div>
+  1835→          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px] gap-1 border-amber-300 text-amber-700 dark:text-amber-300" onClick={onRefresh} disabled={loading}>
+  1836→            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> Retry
+  1837→          </Button>
+  1838→        </CardContent>
+  1839→      </Card>
+  1840→    );
+  1841→  }
+  1842→  const r = regime;
+  1843→  const cls = r.regime === "RISK-ON" ? "border-emerald-300/60 bg-emerald-50/60 dark:bg-emerald-950/20"
+  1844→    : r.regime === "RISK-OFF" ? "border-red-300/60 bg-red-50/60 dark:bg-red-950/20"
+  1845→    : r.regime === "TRANSITION" ? "border-purple-300/60 bg-purple-50/60 dark:bg-purple-950/20"
+  1846→    : "border-amber-300/60 bg-amber-50/60 dark:bg-amber-950/20";
+  1847→  const iconCls = r.regime === "RISK-ON" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+  1848→    : r.regime === "RISK-OFF" ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
+  1849→    : r.regime === "TRANSITION" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300"
+  1850→    : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
+  1851→  const Icon = r.regime === "RISK-ON" ? TrendingUp : r.regime === "RISK-OFF" ? TrendingDown : Activity;
+  1852→  return (
+  1853→    <Card className={cls}>
+  1854→      <CardContent className="p-3">
+  1855→        <div className="flex items-center gap-3 flex-wrap">
+  1856→          <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${iconCls}`}>
+  1857→            <Icon className="w-4 h-4" />
+  1858→          </div>
+  1859→          <div className="flex-1 min-w-0">
+  1860→            <div className="flex items-center gap-2 flex-wrap">
+  1861→              <span className="text-sm font-bold text-foreground">{r.regime}</span>
+  1862→              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-background/60 tabular-nums">
+  1863→                Size: {(r.sizeMultiplier * 100).toFixed(0)}%
+  1864→              </span>
+  1865→              {r.flippedSessionsAgo > 0 && (
+  1866→                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded pastel-purple">
+  1867→                  Flipped {r.flippedSessionsAgo}d ago {r.previousRegime && `from ${r.previousRegime}`}
+  1868→                </span>
+  1869→              )}
+  1870→            </div>
+  1871→            <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1">{r.description}</p>
+  1872→          </div>
+  1873→          <div className="flex items-center gap-3 text-[11px] tabular-nums shrink-0">
+  1874→            <div className="text-right">
+  1875→              <div className="text-[9px] text-muted-foreground uppercase tracking-wide">NIFTY</div>
+  1876→              <div className="font-semibold text-foreground">{fmt(r.niftyClose, 0)}</div>
+  1877→            </div>
+  1878→            <div className={`font-semibold ${r.niftyChangePct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+  1879→              {r.niftyChangePct >= 0 ? "+" : ""}{r.niftyChangePct.toFixed(2)}%
+  1880→            </div>
+  1881→            <div className="text-right hidden sm:block">
+  1882→              <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Breadth</div>
+  1883→              <div className="font-semibold text-foreground">{r.breadthPct.toFixed(0)}%</div>
+  1884→            </div>
+  1885→            <div className="text-right hidden md:block">
+  1886→              <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Vol</div>
+  1887→              <div className="font-semibold text-foreground">{r.volatilityPct.toFixed(1)}%</div>
+  1888→            </div>
+  1889→          </div>
+  1890→          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px] gap-1 shrink-0" onClick={onRefresh} disabled={loading}>
+  1891→            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> Refresh
+  1892→          </Button>
+  1893→        </div>
+  1894→        <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+  1895→          <b className="text-foreground">Recommendation:</b> {r.recommendation} · As of {fmtISTDateTime(r.asOf)}
+  1896→        </p>
+  1897→      </CardContent>
+  1898→    </Card>
+  1899→  );
+  1900→}
+  1901→
+  1902→function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  1903→  return (
+  1904→    <div className="rounded-md bg-muted/40 border border-border/40 p-2">
+  1905→      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">{label}</div>
+  1906→      <div className="text-sm font-bold tabular-nums text-foreground">{value}</div>
+  1907→      {hint && <div className="text-[9px] text-muted-foreground mt-0.5">{hint}</div>}
+  1908→    </div>
+  1909→  );
+  1910→}
+  1911→
+  1912→function ReturnRow({ label, pct }: { label: string; pct: number }) {
+  1913→  return (
+  1914→    <div className="flex items-center justify-between text-[11px]">
+  1915→      <span className="text-muted-foreground">{label}</span>
+  1916→      <ReturnCell pct={pct} />
+  1917→    </div>
+  1918→  );
+  1919→}
+  1920→
+  1921→function SetupExplanation({ s }: { s: ScreenedStock }) {
+  1922→  const reasons: Array<{ ok: boolean; text: string }> = [];
+  1923→  const isUptrend = s.currentPrice > s.dma50 && s.dma50 > s.dma200;
+  1924→  reasons.push({ ok: isUptrend, text: `Price > 50DMA > 200DMA (uptrend): ${isUptrend ? "YES" : "NO"}` });
+  1925→  reasons.push({ ok: s.rsi14 > 50 && s.rsi14 < 75, text: `RSI(14) ${s.rsi14.toFixed(1)} — healthy zone 50-75` });
+  1926→  reasons.push({ ok: s.pctAbove200dma > 0, text: `${s.pctAbove200dma.toFixed(1)}% above 200DMA` });
+  1927→  reasons.push({ ok: s.pctAbove20dma >= -2 && s.pctAbove20dma <= 8, text: `${s.pctAbove20dma.toFixed(1)}% above 20DMA — sweet spot for entry (-2 to +8)` });
+  1928→  reasons.push({ ok: s.volMult >= 1.0, text: `Latest volume ${s.volMult.toFixed(2)}× 50-day average` });
+  1929→  reasons.push({ ok: s.vsaTag === "ACCUM", text: `VSA tag: ${s.vsaTag}${s.vsaTag === "ACCUM" ? " (bullish)" : s.vsaTag === "DIST" ? " (bearish)" : ""}` });
+  1930→  reasons.push({ ok: s.bollingerWidth > 0, text: `Bollinger width: ${s.bollingerWidth.toFixed(2)}% (${s.bbWidth6mPct.toFixed(0)}% percentile vs 6M)` });
+  1931→
+  1932→  return (
+  1933→    <Card className="card-pastel">
+  1934→      <CardHeader>
+  1935→        <CardTitle className="flex items-center gap-2 text-sm">
+  1936→          <Activity className="w-4 h-4 text-primary" /> Why this setup?
+  1937→        </CardTitle>
+  1938→        <CardDescription>Signal Score: {s.signalScore}/100 · Grade: {s.setupGrade}</CardDescription>
+  1939→      </CardHeader>
+  1940→      <CardContent>
+  1941→        <div className="rounded-md bg-muted/40 border border-border/40 p-2.5 mb-3">
+  1942→          <p className="text-[11px] text-foreground leading-relaxed">{tradePlanRationale(s)}</p>
+  1943→        </div>
+  1944→        <div className="space-y-1.5">
+  1945→          {reasons.map((r, i) => (
+  1946→            <div key={i} className="flex items-center gap-2 text-[11px]">
+  1947→              <span className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] font-bold ${r.ok ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"}`}>
+  1948→                {r.ok ? "✓" : "!"}
+  1949→              </span>
+  1950→              <span className="text-muted-foreground">{r.text}</span>
+  1951→            </div>
+  1952→          ))}
+  1953→        </div>
+  1954→      </CardContent>
+  1955→    </Card>
+  1956→  );
+  1957→}
+  1958→
+  1959→function AnalyzeResultCard({ data, regime, rrOverride, setRrOverride }: { data: ScreenedStock; regime: RegimeState | null; rrOverride: { t1: number; t2: number } | null; setRrOverride: (v: { t1: number; t2: number } | null) => void }) {
+  1960→  const sizeMult = regime?.sizeMultiplier ?? 1;
+  1961→  const rr = getRRForSetup(data.setupType, rrOverride);
+  1962→  const riskPerShare = data.entryPrice - data.stopPrice;
+  1963→  const t1 = data.entryPrice + Math.max(0, riskPerShare) * rr.t1;
+  1964→  const t2 = data.entryPrice + Math.max(0, riskPerShare) * rr.t2;
+  1965→  const rrRatio = riskPerShare > 0 ? (t2 - data.entryPrice) / riskPerShare : 0;
+  1966→  const defaultRiskPerTrade = 1000;
+  1967→  const posSize = sizeMult > 0 ? Math.round((defaultRiskPerTrade * sizeMult) / Math.max(0.01, Math.abs(riskPerShare))) : 0;
+  1968→  const riskRupees = posSize * Math.abs(riskPerShare);
+  1969→  const t2Gain = posSize * (t2 - data.entryPrice);
+  1970→
+  1971→  return (
+  1972→    <div className="space-y-4">
+  1973→      {/* Header card: symbol + setup + signal + price */}
+  1974→      <Card className="card-pastel">
+  1975→        <CardContent className="p-4">
+  1976→          <div className="flex items-start justify-between gap-3 flex-wrap">
+  1977→            <div className="min-w-0">
+  1978→              <div className="flex items-center gap-2 flex-wrap">
+  1979→                <h2 className="text-lg font-bold text-foreground">{data.symbol}</h2>
+  1980→                <SetupBadge type={data.setupType} grade={data.setupGrade} />
+  1981→                <SignalScoreBadge score={data.signalScore} />
+  1982→              </div>
+  1983→              <p className="text-[11px] text-muted-foreground mt-0.5">{data.longName} · {data.sector}</p>
+  1984→            </div>
+  1985→            <div className="text-right shrink-0">
+  1986→              <div className="text-xl font-bold tabular-nums text-foreground">₹{fmt(data.currentPrice)}</div>
+  1987→              <div className="text-[11px] text-muted-foreground">as of {data.lastDate}</div>
+  1988→            </div>
+  1989→          </div>
+  1990→        </CardContent>
+  1991→      </Card>
+  1992→
+  1993→      {/* Trade Plan with settings */}
+  1994→      <Card className="card-pastel">
+  1995→        <CardHeader>
+  1996→          <CardTitle className="flex items-center gap-2 text-base">
+  1997→            <Target className="w-4 h-4 text-primary" /> Trade Plan
+  1998→          </CardTitle>
+  1999→          <CardDescription>
+  2000→            Regime size multiplier: <b className="text-foreground">{(sizeMult * 100).toFixed(0)}%</b>
+
+[showing lines 1-2000 of 4206; use offset=2001 with limit to continue reading]
