@@ -18,6 +18,7 @@ import {
   Activity, ArrowDown, ArrowUp, RefreshCw, AlertTriangle,
   ShieldAlert, TrendingUp, TrendingDown, Gauge, Wallet, Target, Zap, Timer, Clock,
   Bell, BellRing, History, GitCompare, SlidersHorizontal, Search, Star, Send,
+  Plus, Pencil,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -625,6 +626,40 @@ export default function Home() {
     setPositions(prev => [...prev, pos]);
     toast({ title: "📋 Position Opened", description: `${stock.symbol} — ${pos.shares} shares @ ₹${stock.currentPrice.toFixed(0)}` });
   }, [rrOverride]);
+
+  // Manual position entry — for stocks not in the screen
+  const manualOpenPosition = useCallback((data: { symbol: string; entryPrice: number; shares: number; stopPrice?: number; target1?: number; target2?: number; setupType?: string }) => {
+    const sym = data.symbol.toUpperCase().replace(/\.NS$/, "").trim();
+    if (!sym) { toast({ title: "Symbol required", variant: "destructive" }); return; }
+    if (positions.some(p => p.symbol === sym)) { toast({ title: "Position already open", description: `${sym} is already in your positions`, variant: "destructive" }); return; }
+    const entry = data.entryPrice;
+    const stop = data.stopPrice || entry * 0.95; // default 5% stop
+    const risk = entry - stop;
+    const rr = getRRForSetup(data.setupType || "UPTREND", rrOverride);
+    const pos: Position = {
+      id: `${sym}-${Date.now()}`,
+      symbol: sym,
+      longName: sym,
+      entryPrice: entry,
+      shares: data.shares,
+      entryDate: new Date().toISOString(),
+      stopPrice: stop,
+      target1: data.target1 || entry + risk * rr.t1,
+      target2: data.target2 || entry + risk * rr.t2,
+      setupType: data.setupType || "MANUAL",
+      setupGrade: "—",
+      signalScore: 0,
+      rrMultiplier: rr,
+    };
+    setPositions(prev => [...prev, pos]);
+    toast({ title: "📋 Position Added", description: `${sym} — ${data.shares} shares @ ₹${entry.toFixed(0)}` });
+  }, [rrOverride, positions]);
+
+  // Edit position — update shares, entry price, stop, targets
+  const updatePosition = useCallback((positionId: string, updates: Partial<Position>) => {
+    setPositions(prev => prev.map(p => p.id === positionId ? { ...p, ...updates } : p));
+    toast({ title: "✏️ Position Updated", description: `${updates.symbol || "Position"} updated` });
+  }, []);
 
   const closePosition = useCallback((positionId: string, exitPrice: number, reason: string) => {
     setPositions(prev => {
@@ -1544,7 +1579,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full mt-3">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} watchlist={watchlist} addToWatchlist={addToWatchlist} removeFromWatchlist={removeFromWatchlist} isInWatchlist={isInWatchlist} onAnalyzeWatchlist={(sym) => { setTab("analyze"); runAnalyze(sym); }} telegramConfig={telegramConfig} setTelegramConfig={setTelegramConfig} sendTelegramAlert={sendTelegramAlert} stabilityData={stabilityData} positions={positions} openPosition={openPosition} closePosition={closePosition} isPositionOpen={isPositionOpen} positionPrices={positionPrices} refreshPositionPrices={refreshPositionPrices} positionPricesLoading={positionPricesLoading} closedTrades={closedTrades} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} watchlist={watchlist} addToWatchlist={addToWatchlist} removeFromWatchlist={removeFromWatchlist} isInWatchlist={isInWatchlist} onAnalyzeWatchlist={(sym) => { setTab("analyze"); runAnalyze(sym); }} telegramConfig={telegramConfig} setTelegramConfig={setTelegramConfig} sendTelegramAlert={sendTelegramAlert} stabilityData={stabilityData} positions={positions} openPosition={openPosition} closePosition={closePosition} isPositionOpen={isPositionOpen} positionPrices={positionPrices} refreshPositionPrices={refreshPositionPrices} positionPricesLoading={positionPricesLoading} closedTrades={closedTrades} manualOpenPosition={manualOpenPosition} updatePosition={updatePosition} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -2664,7 +2699,7 @@ function StabilityBadge({ stability, smoothedScore }: { stability: string; smoot
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert, stabilityData, positions, openPosition, closePosition, isPositionOpen, positionPrices, refreshPositionPrices, positionPricesLoading, closedTrades }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void; stabilityData?: Record<string, any>; positions?: Position[]; openPosition?: (stock: any) => void; closePosition?: (positionId: string, exitPrice: number, reason: string) => void; isPositionOpen?: (symbol: string) => boolean; positionPrices?: Record<string, number>; refreshPositionPrices?: () => void; positionPricesLoading?: boolean; closedTrades?: ClosedTrade[] }) {
+function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert, stabilityData, positions, openPosition, closePosition, isPositionOpen, positionPrices, refreshPositionPrices, positionPricesLoading, closedTrades, manualOpenPosition, updatePosition }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void; stabilityData?: Record<string, any>; positions?: Position[]; openPosition?: (stock: any) => void; closePosition?: (positionId: string, exitPrice: number, reason: string) => void; isPositionOpen?: (symbol: string) => boolean; positionPrices?: Record<string, number>; refreshPositionPrices?: () => void; positionPricesLoading?: boolean; closedTrades?: ClosedTrade[]; manualOpenPosition?: (data: { symbol: string; entryPrice: number; shares: number; stopPrice?: number; target1?: number; target2?: number; setupType?: string }) => void; updatePosition?: (positionId: string, updates: Partial<Position>) => void }) {
   // Column sort state
   const [sortCol, setSortCol] = useState<string>("");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -3118,6 +3153,8 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
         onRefreshPrices={refreshPositionPrices}
         refreshing={!!positionPricesLoading}
         onClose={closePosition}
+        onManualOpen={manualOpenPosition}
+        onUpdate={updatePosition}
       />
 
       {/* Trade Journal — closed trade history + win rate by setup */}
@@ -3220,23 +3257,97 @@ function WatchlistCard({ watchlist, onAnalyze, onRemove }: {
 }
 
 /* ---------------------------------------------------------------- PositionsCard */
-function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing, onClose }: {
+function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing, onClose, onManualOpen, onUpdate }: {
   positions: Position[];
   positionPrices: Record<string, number>;
   onRefreshPrices?: () => void;
   refreshing?: boolean;
   onClose?: (positionId: string, exitPrice: number, reason: string) => void;
+  onManualOpen?: (data: { symbol: string; entryPrice: number; shares: number; stopPrice?: number; target1?: number; target2?: number; setupType?: string }) => void;
+  onUpdate?: (positionId: string, updates: Partial<Position>) => void;
 }) {
   // Track which position's inline close form is open + form values
   const [closingId, setClosingId] = useState<string | null>(null);
   const [exitPriceInput, setExitPriceInput] = useState<string>("");
   const [exitReason, setExitReason] = useState<string>("Manual");
 
+  // Add Position inline form state
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addForm, setAddForm] = useState<{
+    symbol: string; entryPrice: string; shares: string;
+    stopPrice: string; target1: string; target2: string; setupType: string;
+  }>({ symbol: "", entryPrice: "", shares: "", stopPrice: "", target1: "", target2: "", setupType: "MANUAL" });
+
+  // Edit Position inline form state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{
+    shares: string; entryPrice: string; stopPrice: string; target1: string; target2: string;
+  }>({ shares: "", entryPrice: "", stopPrice: "", target1: "", target2: "" });
+
+  const resetAddForm = () => setAddForm({ symbol: "", entryPrice: "", shares: "", stopPrice: "", target1: "", target2: "", setupType: "MANUAL" });
+
+  const cancelAdd = () => { setShowAddForm(false); resetAddForm(); };
+
+  const confirmAdd = () => {
+    const symbol = addForm.symbol.toUpperCase().trim();
+    const entryPrice = parseFloat(addForm.entryPrice);
+    const shares = parseInt(addForm.shares, 10);
+    if (!symbol) { toast({ title: "Symbol required", variant: "destructive" }); return; }
+    if (isNaN(entryPrice) || entryPrice <= 0) { toast({ title: "Invalid entry price", description: "Enter a valid positive number", variant: "destructive" }); return; }
+    if (isNaN(shares) || shares <= 0) { toast({ title: "Invalid shares", description: "Enter a positive integer", variant: "destructive" }); return; }
+    const stopPrice = addForm.stopPrice ? parseFloat(addForm.stopPrice) : undefined;
+    const target1 = addForm.target1 ? parseFloat(addForm.target1) : undefined;
+    const target2 = addForm.target2 ? parseFloat(addForm.target2) : undefined;
+    if (stopPrice !== undefined && (isNaN(stopPrice) || stopPrice <= 0)) { toast({ title: "Invalid stop price", variant: "destructive" }); return; }
+    if (target1 !== undefined && (isNaN(target1) || target1 <= 0)) { toast({ title: "Invalid target 1", variant: "destructive" }); return; }
+    if (target2 !== undefined && (isNaN(target2) || target2 <= 0)) { toast({ title: "Invalid target 2", variant: "destructive" }); return; }
+    onManualOpen?.({ symbol, entryPrice, shares, stopPrice, target1, target2, setupType: addForm.setupType });
+    cancelAdd();
+  };
+
+  const startEdit = (p: Position) => {
+    setEditingId(p.id);
+    setEditForm({
+      shares: String(p.shares),
+      entryPrice: String(p.entryPrice),
+      stopPrice: p.stopPrice ? String(p.stopPrice) : "",
+      target1: p.target1 ? String(p.target1) : "",
+      target2: p.target2 ? String(p.target2) : "",
+    });
+    // close any open close form
+    setClosingId(null);
+    setExitPriceInput("");
+    setExitReason("Manual");
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({ shares: "", entryPrice: "", stopPrice: "", target1: "", target2: "" });
+  };
+
+  const confirmEdit = (p: Position) => {
+    const shares = parseInt(editForm.shares, 10);
+    const entryPrice = parseFloat(editForm.entryPrice);
+    if (isNaN(shares) || shares <= 0) { toast({ title: "Invalid shares", description: "Enter a positive integer", variant: "destructive" }); return; }
+    if (isNaN(entryPrice) || entryPrice <= 0) { toast({ title: "Invalid entry price", description: "Enter a valid positive number", variant: "destructive" }); return; }
+    const stopPrice = editForm.stopPrice ? parseFloat(editForm.stopPrice) : 0;
+    const target1 = editForm.target1 ? parseFloat(editForm.target1) : 0;
+    const target2 = editForm.target2 ? parseFloat(editForm.target2) : 0;
+    if (stopPrice !== 0 && (isNaN(stopPrice) || stopPrice <= 0)) { toast({ title: "Invalid stop price", variant: "destructive" }); return; }
+    if (target1 !== 0 && (isNaN(target1) || target1 <= 0)) { toast({ title: "Invalid target 1", variant: "destructive" }); return; }
+    if (target2 !== 0 && (isNaN(target2) || target2 <= 0)) { toast({ title: "Invalid target 2", variant: "destructive" }); return; }
+    onUpdate?.(p.id, { shares, entryPrice, stopPrice, target1, target2 });
+    cancelEdit();
+  };
+
   const startClose = (p: Position) => {
     const livePrice = positionPrices[p.symbol] ?? p.entryPrice;
     setClosingId(p.id);
     setExitPriceInput(String(livePrice.toFixed(2)));
     setExitReason("Manual");
+    // close any open edit form
+    setEditingId(null);
+    setEditForm({ shares: "", entryPrice: "", stopPrice: "", target1: "", target2: "" });
   };
 
   const cancelClose = () => {
@@ -3280,21 +3391,145 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
             <Badge variant="secondary" className="text-[10px] tabular-nums h-5">{positions.length}</Badge>
           </CardTitle>
           <CardDescription className="text-[10px] mt-0.5">
-            Paper trade tracker · auto-logs entry, stop, targets, P&L · saved in your browser
+            Paper trade tracker · auto-logs entry, stop, targets, P&amp;L · saved in your browser
           </CardDescription>
         </div>
-        {positions.length > 0 && onRefreshPrices && (
-          <Button onClick={onRefreshPrices} disabled={refreshing} size="sm" variant="outline" className="h-7 text-[11px] gap-1 border-blue-300 text-blue-700 hover:bg-blue-50 shrink-0">
-            <RefreshCw className={`w-3 h-3 ${refreshing ? "animate-spin" : ""}`} />
-            <span className="hidden sm:inline">{refreshing ? "Refreshing…" : "Refresh Prices"}</span>
-            <span className="sm:hidden">{refreshing ? "…" : "LTP"}</span>
-          </Button>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {onManualOpen && (
+            <Button
+              onClick={() => showAddForm ? cancelAdd() : setShowAddForm(true)}
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] gap-1 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+            >
+              <Plus className="w-3 h-3" />
+              <span className="hidden sm:inline">{showAddForm ? "Cancel Add" : "Add Position"}</span>
+              <span className="sm:hidden">{showAddForm ? "✕" : "+"}</span>
+            </Button>
+          )}
+          {positions.length > 0 && onRefreshPrices && (
+            <Button onClick={onRefreshPrices} disabled={refreshing} size="sm" variant="outline" className="h-7 text-[11px] gap-1 border-blue-300 text-blue-700 hover:bg-blue-50">
+              <RefreshCw className={`w-3 h-3 ${refreshing ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline">{refreshing ? "Refreshing…" : "Refresh Prices"}</span>
+              <span className="sm:hidden">{refreshing ? "…" : "LTP"}</span>
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="pt-0">
+        {/* Inline Add Position form */}
+        {showAddForm && onManualOpen && (
+          <div className="mb-3 rounded-lg border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/40 dark:bg-emerald-900/10 p-3">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Plus className="w-3.5 h-3.5 text-emerald-700" />
+              <span className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300">Add Position Manually</span>
+              <span className="text-[9px] text-muted-foreground ml-1">· stop / T1 / T2 default from setup RR if blank</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 items-end">
+              <div className="flex flex-col gap-0.5">
+                <Label className="text-[9px] text-muted-foreground">Symbol</Label>
+                <Input
+                  value={addForm.symbol}
+                  onChange={(e) => setAddForm(f => ({ ...f, symbol: e.target.value.toUpperCase() }))}
+                  placeholder="EBGNG"
+                  className="h-7 text-[11px] uppercase"
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === "Enter") confirmAdd(); if (e.key === "Escape") cancelAdd(); }}
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <Label className="text-[9px] text-muted-foreground">Entry ₹</Label>
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  value={addForm.entryPrice}
+                  onChange={(e) => setAddForm(f => ({ ...f, entryPrice: e.target.value }))}
+                  placeholder="723"
+                  className="h-7 text-[11px] tabular-nums"
+                  onKeyDown={(e) => { if (e.key === "Enter") confirmAdd(); if (e.key === "Escape") cancelAdd(); }}
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <Label className="text-[9px] text-muted-foreground">Shares</Label>
+                <Input
+                  type="number"
+                  step="1"
+                  min="0"
+                  value={addForm.shares}
+                  onChange={(e) => setAddForm(f => ({ ...f, shares: e.target.value }))}
+                  placeholder="10"
+                  className="h-7 text-[11px] tabular-nums"
+                  onKeyDown={(e) => { if (e.key === "Enter") confirmAdd(); if (e.key === "Escape") cancelAdd(); }}
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <Label className="text-[9px] text-muted-foreground">Stop ₹ (optional)</Label>
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  value={addForm.stopPrice}
+                  onChange={(e) => setAddForm(f => ({ ...f, stopPrice: e.target.value }))}
+                  placeholder="defaults 5% below"
+                  className="h-7 text-[11px] tabular-nums"
+                  onKeyDown={(e) => { if (e.key === "Enter") confirmAdd(); if (e.key === "Escape") cancelAdd(); }}
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <Label className="text-[9px] text-muted-foreground">Target 1 ₹ (optional)</Label>
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  value={addForm.target1}
+                  onChange={(e) => setAddForm(f => ({ ...f, target1: e.target.value }))}
+                  placeholder="optional"
+                  className="h-7 text-[11px] tabular-nums"
+                  onKeyDown={(e) => { if (e.key === "Enter") confirmAdd(); if (e.key === "Escape") cancelAdd(); }}
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <Label className="text-[9px] text-muted-foreground">Target 2 ₹ (optional)</Label>
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  value={addForm.target2}
+                  onChange={(e) => setAddForm(f => ({ ...f, target2: e.target.value }))}
+                  placeholder="optional"
+                  className="h-7 text-[11px] tabular-nums"
+                  onKeyDown={(e) => { if (e.key === "Enter") confirmAdd(); if (e.key === "Escape") cancelAdd(); }}
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <Label className="text-[9px] text-muted-foreground">Setup Type</Label>
+                <Select value={addForm.setupType} onValueChange={(v) => setAddForm(f => ({ ...f, setupType: v }))}>
+                  <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="BREAKOUT">BREAKOUT</SelectItem>
+                    <SelectItem value="PULLBACK">PULLBACK</SelectItem>
+                    <SelectItem value="UPTREND">UPTREND</SelectItem>
+                    <SelectItem value="MANUAL">MANUAL</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex gap-1 mt-2 justify-end">
+              <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={cancelAdd}>Cancel</Button>
+              <Button size="sm" variant="default" className="h-7 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white gap-1" onClick={confirmAdd}>
+                <Plus className="w-3 h-3" /> Add
+              </Button>
+            </div>
+          </div>
+        )}
         {positions.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
-            No open positions. Click &apos;Buy&apos; next to any stock to open a position.
+            {showAddForm ? (
+              <>Fill the form above and click <span className="font-semibold text-emerald-700">Add</span> to create your first position.</>
+            ) : (
+              <>No open positions. Click &apos;Buy&apos; next to any stock to open a position{onManualOpen ? ", or use &apos;Add Position&apos; to enter one manually" : ""}.</>
+            )}
           </div>
         ) : (
           <div className="table-scroll-wrapper sticky-header-table max-h-[28rem] overflow-y-auto">
@@ -3305,13 +3540,13 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
                   <TableHead className="text-[10px] text-right">Entry ₹</TableHead>
                   <TableHead className="text-[10px] text-right">Current ₹</TableHead>
                   <TableHead className="text-[10px] text-right">Shares</TableHead>
-                  <TableHead className="text-[10px] text-right">P&L ₹</TableHead>
-                  <TableHead className="text-[10px] text-right">P&L %</TableHead>
+                  <TableHead className="text-[10px] text-right">P&amp;L ₹</TableHead>
+                  <TableHead className="text-[10px] text-right">P&amp;L %</TableHead>
                   <TableHead className="text-[10px] text-right hidden md:table-cell">Stop ₹</TableHead>
                   <TableHead className="text-[10px] text-right hidden md:table-cell">T1 ₹</TableHead>
                   <TableHead className="text-[10px] text-right hidden lg:table-cell">T2 ₹</TableHead>
                   <TableHead className="text-[10px] text-center">Status</TableHead>
-                  <TableHead className="text-[10px] text-right">Close</TableHead>
+                  <TableHead className="text-[10px] text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -3321,6 +3556,7 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
                   const pnlPct = ((currentPrice - p.entryPrice) / p.entryPrice) * 100;
                   const pnlPos = pnlRupees >= 0;
                   const isClosingThis = closingId === p.id;
+                  const isEditingThis = editingId === p.id;
                   return (
                     <Fragment key={p.id}>
                       <TableRow>
@@ -3351,11 +3587,122 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
                         <TableCell className="text-right tabular-nums text-[11px] text-emerald-600 dark:text-emerald-400 hidden lg:table-cell">{fmt(p.target2)}</TableCell>
                         <TableCell className="text-center">{getStatusBadge(p, currentPrice)}</TableCell>
                         <TableCell className="text-right">
-                          <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 border-red-300 text-red-700 hover:bg-red-50" onClick={() => startClose(p)} disabled={!onClose}>
-                            ✕ Close
-                          </Button>
+                          <div className="inline-flex gap-1">
+                            {onUpdate && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-[10px] gap-1 border-amber-300 text-amber-700 hover:bg-amber-50"
+                                onClick={() => isEditingThis ? cancelEdit() : startEdit(p)}
+                                disabled={isClosingThis}
+                                title="Edit position"
+                              >
+                                <Pencil className="w-3 h-3" />
+                                <span className="hidden sm:inline">{isEditingThis ? "Cancel" : "Edit"}</span>
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 px-2 text-[10px] gap-1 border-red-300 text-red-700 hover:bg-red-50"
+                              onClick={() => startClose(p)}
+                              disabled={!onClose || isEditingThis}
+                            >
+                              ✕ Close
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
+                      {isEditingThis && (
+                        <TableRow className="bg-amber-50/40 dark:bg-amber-900/10">
+                          <TableCell colSpan={11} className="p-2">
+                            <div className="flex flex-wrap items-end gap-2 text-[11px]">
+                              <div className="flex flex-col gap-0.5">
+                                <Label className="text-[9px] text-muted-foreground">Shares</Label>
+                                <Input
+                                  type="number"
+                                  step="1"
+                                  min="0"
+                                  value={editForm.shares}
+                                  onChange={(e) => setEditForm(f => ({ ...f, shares: e.target.value }))}
+                                  className="h-7 w-24 text-[11px] tabular-nums"
+                                  autoFocus
+                                  onKeyDown={(e) => { if (e.key === "Enter") confirmEdit(p); if (e.key === "Escape") cancelEdit(); }}
+                                />
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <Label className="text-[9px] text-muted-foreground">Entry ₹</Label>
+                                <Input
+                                  type="number"
+                                  step="0.05"
+                                  min="0"
+                                  value={editForm.entryPrice}
+                                  onChange={(e) => setEditForm(f => ({ ...f, entryPrice: e.target.value }))}
+                                  className="h-7 w-28 text-[11px] tabular-nums"
+                                  onKeyDown={(e) => { if (e.key === "Enter") confirmEdit(p); if (e.key === "Escape") cancelEdit(); }}
+                                />
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <Label className="text-[9px] text-muted-foreground">Stop ₹</Label>
+                                <Input
+                                  type="number"
+                                  step="0.05"
+                                  min="0"
+                                  value={editForm.stopPrice}
+                                  onChange={(e) => setEditForm(f => ({ ...f, stopPrice: e.target.value }))}
+                                  className="h-7 w-28 text-[11px] tabular-nums"
+                                  onKeyDown={(e) => { if (e.key === "Enter") confirmEdit(p); if (e.key === "Escape") cancelEdit(); }}
+                                />
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <Label className="text-[9px] text-muted-foreground">T1 ₹</Label>
+                                <Input
+                                  type="number"
+                                  step="0.05"
+                                  min="0"
+                                  value={editForm.target1}
+                                  onChange={(e) => setEditForm(f => ({ ...f, target1: e.target.value }))}
+                                  className="h-7 w-28 text-[11px] tabular-nums"
+                                  onKeyDown={(e) => { if (e.key === "Enter") confirmEdit(p); if (e.key === "Escape") cancelEdit(); }}
+                                />
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <Label className="text-[9px] text-muted-foreground">T2 ₹</Label>
+                                <Input
+                                  type="number"
+                                  step="0.05"
+                                  min="0"
+                                  value={editForm.target2}
+                                  onChange={(e) => setEditForm(f => ({ ...f, target2: e.target.value }))}
+                                  className="h-7 w-28 text-[11px] tabular-nums"
+                                  onKeyDown={(e) => { if (e.key === "Enter") confirmEdit(p); if (e.key === "Escape") cancelEdit(); }}
+                                />
+                              </div>
+                              {(() => {
+                                const ep = parseFloat(editForm.entryPrice);
+                                const sh = parseInt(editForm.shares, 10);
+                                if (!isNaN(ep) && ep > 0 && !isNaN(sh) && sh > 0) {
+                                  const pR = (currentPrice - ep) * sh;
+                                  const pP = ((currentPrice - ep) / ep) * 100;
+                                  return (
+                                    <div className="flex flex-col gap-0.5 text-[10px]">
+                                      <span className="text-muted-foreground">Preview P&amp;L</span>
+                                      <span className={`font-semibold tabular-nums ${pR >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                        {pR >= 0 ? "+" : "−"}₹{Math.abs(Math.round(pR)).toLocaleString("en-IN")} ({pP >= 0 ? "+" : ""}{pP.toFixed(1)}%)
+                                      </span>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
+                              <div className="flex gap-1 ml-auto">
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={cancelEdit}>Cancel</Button>
+                                <Button size="sm" variant="default" className="h-7 px-2 text-[10px] bg-amber-600 hover:bg-amber-700 text-white" onClick={() => confirmEdit(p)}>Save</Button>
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
                       {isClosingThis && (
                         <TableRow className="bg-muted/40">
                           <TableCell colSpan={11} className="p-2">
@@ -3395,7 +3742,7 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
                                   const pP = ((ep - p.entryPrice) / p.entryPrice) * 100;
                                   return (
                                     <div className="flex flex-col gap-0.5 text-[10px]">
-                                      <span className="text-muted-foreground">Preview P&L</span>
+                                      <span className="text-muted-foreground">Preview P&amp;L</span>
                                       <span className={`font-semibold tabular-nums ${pR >= 0 ? "text-emerald-600" : "text-red-600"}`}>
                                         {pR >= 0 ? "+" : "−"}₹{Math.abs(Math.round(pR)).toLocaleString("en-IN")} ({pP >= 0 ? "+" : ""}{pP.toFixed(1)}%)
                                       </span>
