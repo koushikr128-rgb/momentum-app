@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, Fragment } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -157,6 +157,40 @@ type CorrelationResponse = {
   highCorrelationPairs: Array<{ a: string; b: string; rho: number }>;
   nDataPoints: number;
   error?: string;
+};
+
+// ===== Trade Journal + Position Tracker =====
+type Position = {
+  id: string;
+  symbol: string;
+  longName: string;
+  entryPrice: number;
+  shares: number;
+  entryDate: string; // ISO
+  stopPrice: number;
+  target1: number;
+  target2: number;
+  setupType: string;
+  setupGrade: string;
+  signalScore: number;
+  rrMultiplier: { t1: number; t2: number };
+  sector?: string;
+};
+
+type ClosedTrade = {
+  id: string;
+  symbol: string;
+  longName: string;
+  entryPrice: number;
+  exitPrice: number;
+  shares: number;
+  entryDate: string;
+  exitDate: string;
+  pnlRupees: number;
+  pnlPct: number;
+  setupType: string;
+  holdDays: number;
+  exitReason: string; // "Target 1", "Target 2", "Stop Loss", "Manual"
 };
 
 const fmt = (n: number, d = 2) =>
@@ -545,6 +579,121 @@ export default function Home() {
     return watchlist.some(w => w.symbol === symbol);
   }, [watchlist]);
 
+  // ===== Trade Journal + Position Tracker =====
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
+  const [positionPrices, setPositionPrices] = useState<Record<string, number>>({});
+
+  // Load positions + closed trades from localStorage on mount
+  useEffect(() => {
+    try {
+      const sp = localStorage.getItem("nifty_positions");
+      if (sp) { const parsed = JSON.parse(sp); if (Array.isArray(parsed)) setPositions(parsed); }
+      const sc = localStorage.getItem("nifty_closed_trades");
+      if (sc) { const parsed = JSON.parse(sc); if (Array.isArray(parsed)) setClosedTrades(parsed); }
+    } catch {}
+  }, []);
+
+  // Persist positions + closed trades on change
+  useEffect(() => {
+    try { localStorage.setItem("nifty_positions", JSON.stringify(positions)); } catch {}
+  }, [positions]);
+  useEffect(() => {
+    try { localStorage.setItem("nifty_closed_trades", JSON.stringify(closedTrades)); } catch {}
+  }, [closedTrades]);
+
+  const openPosition = useCallback((stock: any) => {
+    // Auto-log: entry=currentPrice, stop=stopPrice, targets from R:R presets
+    const rr = getRRForSetup(stock.setupType, rrOverride);
+    const risk = stock.entryPrice - stock.stopPrice;
+    const pos: Position = {
+      id: `${stock.symbol}-${Date.now()}`,
+      symbol: stock.symbol,
+      longName: stock.longName || stock.symbol,
+      entryPrice: stock.currentPrice,
+      shares: Math.floor(10000 / stock.currentPrice), // ₹10k per position
+      entryDate: new Date().toISOString(),
+      stopPrice: stock.stopPrice,
+      target1: stock.currentPrice + risk * rr.t1,
+      target2: stock.currentPrice + risk * rr.t2,
+      setupType: stock.setupType,
+      setupGrade: stock.setupGrade,
+      signalScore: stock.signalScore,
+      rrMultiplier: rr,
+      sector: stock.sector,
+    };
+    setPositions(prev => [...prev, pos]);
+    toast({ title: "📋 Position Opened", description: `${stock.symbol} — ${pos.shares} shares @ ₹${stock.currentPrice.toFixed(0)}` });
+  }, [rrOverride]);
+
+  const closePosition = useCallback((positionId: string, exitPrice: number, reason: string) => {
+    setPositions(prev => {
+      const pos = prev.find(p => p.id === positionId);
+      if (!pos) return prev;
+      const pnlRupees = (exitPrice - pos.entryPrice) * pos.shares;
+      const pnlPct = ((exitPrice - pos.entryPrice) / pos.entryPrice) * 100;
+      const holdDays = Math.floor((Date.now() - new Date(pos.entryDate).getTime()) / (1000 * 60 * 60 * 24));
+      const closed: ClosedTrade = {
+        ...pos,
+        exitPrice,
+        exitDate: new Date().toISOString(),
+        pnlRupees,
+        pnlPct,
+        holdDays,
+        exitReason: reason,
+      };
+      setClosedTrades(prev2 => [...prev2, closed]);
+      toast({ title: "✅ Position Closed", description: `${pos.symbol} — P&L: ${pnlRupees >= 0 ? "+" : ""}₹${Math.round(pnlRupees).toLocaleString("en-IN")} (${pnlPct.toFixed(1)}%)` });
+      // Clean up cached live price for this symbol (only if no other open position has it)
+      setPositionPrices(prevP => {
+        const stillOpen = prev.filter(p => p.symbol === pos.symbol && p.id !== pos.id);
+        if (stillOpen.length > 0) return prevP;
+        const next = { ...prevP };
+        delete next[pos.symbol];
+        return next;
+      });
+      return prev.filter(p => p.id !== positionId);
+    });
+  }, []);
+
+  const isPositionOpen = useCallback((symbol: string) => {
+    return positions.some(p => p.symbol === symbol);
+  }, [positions]);
+
+  // Refresh live prices for all open positions via /api/refresh-prices
+  const [positionPricesLoading, setPositionPricesLoading] = useState(false);
+  const refreshPositionPrices = useCallback(async () => {
+    if (positions.length === 0) return;
+    setPositionPricesLoading(true);
+    try {
+      const kiteTok = kiteAccessTokenRef.current || "";
+      const stocks = positions.map(p => ({ symbol: p.symbol, currentPrice: p.entryPrice }));
+      const res = await fetch("/api/refresh-prices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stocks, kiteToken: kiteTok }),
+      });
+      if (!res.ok) throw new Error("Price refresh failed");
+      const data = await res.json();
+      if (data.prices) {
+        const map: Record<string, number> = {};
+        for (const [sym, info] of Object.entries(data.prices)) {
+          map[sym] = (info as any).price;
+        }
+        setPositionPrices(prev => ({ ...prev, ...map }));
+        const count = Object.keys(map).length;
+        const src = data.source === "zerodha" ? "Zerodha" : data.source === "python" ? "Python yfinance" : "Yahoo";
+        toast({ title: "✅ Position prices refreshed", description: `${count} positions updated from ${src}` });
+      } else if (data.error) {
+        toast({ title: "Price refresh failed", description: data.error, variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Price refresh failed", description: e?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setPositionPricesLoading(false);
+    }
+  }, [positions]);
+
   // ===== Telegram alerts config =====
   const [telegramConfig, setTelegramConfig] = useState<{ botToken: string; chatId: string; enabled: boolean }>({
     botToken: "",
@@ -590,6 +739,31 @@ export default function Home() {
     const msg = `🚀 ${aPlusStocks.length} new A+ signal${aPlusStocks.length > 1 ? "s" : ""}:\n${aPlusStocks.map((s: any) => `• ${s.symbol} — ${s.setupType} (Signal: ${s.signalScore})`).join("\n")}`;
     sendTelegramAlert(msg);
   }, [screen?.runAt, telegramConfig.enabled, sendTelegramAlert]);
+
+  // ===== Auto-alert when positions are near stop/target =====
+  const lastPositionAlertRef = useRef<string>("");
+  useEffect(() => {
+    if (positions.length === 0 || Object.keys(positionPrices).length === 0) return;
+    const alerts: string[] = [];
+    for (const pos of positions) {
+      const price = positionPrices[pos.symbol];
+      if (!price) continue;
+      const nearStop = Math.abs(price - pos.stopPrice) / pos.stopPrice <= 0.02;
+      const nearT1 = Math.abs(price - pos.target1) / pos.target1 <= 0.02;
+      const nearT2 = Math.abs(price - pos.target2) / pos.target2 <= 0.02;
+      if (nearStop) alerts.push(`🔴 ${pos.symbol} near STOP ₹${pos.stopPrice.toFixed(0)} (now ₹${price.toFixed(0)})`);
+      if (nearT1) alerts.push(`🟢 ${pos.symbol} near TARGET 1 ₹${pos.target1.toFixed(0)} (now ₹${price.toFixed(0)})`);
+      if (nearT2) alerts.push(`🟢 ${pos.symbol} near TARGET 2 ₹${pos.target2.toFixed(0)} (now ₹${price.toFixed(0)})`);
+    }
+    if (alerts.length === 0) { lastPositionAlertRef.current = ""; return; }
+    const alertKey = alerts.join("|");
+    if (lastPositionAlertRef.current === alertKey) return;
+    lastPositionAlertRef.current = alertKey;
+    sendTelegramAlert(`⚠️ Position Alert:\n${alerts.join("\n")}`);
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification("Position Alert", { body: alerts.join("\n") });
+    }
+  }, [positionPrices, positions, sendTelegramAlert]);
 
   const [publishing, setPublishing] = useState(false);
   const [lastPublished, setLastPublished] = useState<string | null>(null);
@@ -1370,7 +1544,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full mt-3">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} watchlist={watchlist} addToWatchlist={addToWatchlist} removeFromWatchlist={removeFromWatchlist} isInWatchlist={isInWatchlist} onAnalyzeWatchlist={(sym) => { setTab("analyze"); runAnalyze(sym); }} telegramConfig={telegramConfig} setTelegramConfig={setTelegramConfig} sendTelegramAlert={sendTelegramAlert} stabilityData={stabilityData} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} watchlist={watchlist} addToWatchlist={addToWatchlist} removeFromWatchlist={removeFromWatchlist} isInWatchlist={isInWatchlist} onAnalyzeWatchlist={(sym) => { setTab("analyze"); runAnalyze(sym); }} telegramConfig={telegramConfig} setTelegramConfig={setTelegramConfig} sendTelegramAlert={sendTelegramAlert} stabilityData={stabilityData} positions={positions} openPosition={openPosition} closePosition={closePosition} isPositionOpen={isPositionOpen} positionPrices={positionPrices} refreshPositionPrices={refreshPositionPrices} positionPricesLoading={positionPricesLoading} closedTrades={closedTrades} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -2490,7 +2664,7 @@ function StabilityBadge({ stability, smoothedScore }: { stability: string; smoot
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert, stabilityData }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void; stabilityData?: Record<string, any> }) {
+function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert, stabilityData, positions, openPosition, closePosition, isPositionOpen, positionPrices, refreshPositionPrices, positionPricesLoading, closedTrades }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void; stabilityData?: Record<string, any>; positions?: Position[]; openPosition?: (stock: any) => void; closePosition?: (positionId: string, exitPrice: number, reason: string) => void; isPositionOpen?: (symbol: string) => boolean; positionPrices?: Record<string, number>; refreshPositionPrices?: () => void; positionPricesLoading?: boolean; closedTrades?: ClosedTrade[] }) {
   // Column sort state
   const [sortCol, setSortCol] = useState<string>("");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -2819,6 +2993,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                       <TableHead className="text-right hidden lg:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("volMult")}>Vol <SortIcon col="volMult" /></TableHead>
                     </>
                   )}
+                  {screenMode !== "bridge" && <TableHead className="text-center">Buy</TableHead>}
                   <TableHead className="w-10 text-center"><Star className="w-3 h-3 inline text-muted-foreground" /></TableHead>
                   {onAnalyze && <TableHead className="text-right">Analyze</TableHead>}
                 </TableRow>
@@ -2896,6 +3071,17 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                         </TableCell>
                       </>
                     )}
+                    {screenMode !== "bridge" && (
+                      <TableCell className="text-center">
+                        {isPositionOpen?.(s.symbol) ? (
+                          <Badge className="bg-emerald-100 text-emerald-700 text-[9px]">OPEN</Badge>
+                        ) : (
+                          <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 border-emerald-300 text-emerald-700 hover:bg-emerald-50" onClick={() => openPosition?.(s)}>
+                            <Wallet className="w-3 h-3" /> Buy
+                          </Button>
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell className="text-center">
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => { if (isInWatchlist?.(s.symbol)) removeFromWatchlist?.(s.symbol); else addToWatchlist?.(s); }} title={isInWatchlist?.(s.symbol) ? "Remove from watchlist" : "Add to watchlist"}>
                         <Star className={`h-4 w-4 ${isInWatchlist?.(s.symbol) ? "text-yellow-500 fill-yellow-400" : "text-muted-foreground"}`} />
@@ -2923,6 +3109,20 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
         searchSymbol={historySearchSymbol || ""}
         setSearchSymbol={setHistorySearchSymbol || (() => {})}
         currentScreenSymbols={screen?.top10?.map((s: any) => s.symbol) || []}
+      />
+
+      {/* Open Positions — paper trade tracker */}
+      <PositionsCard
+        positions={positions || []}
+        positionPrices={positionPrices || {}}
+        onRefreshPrices={refreshPositionPrices}
+        refreshing={!!positionPricesLoading}
+        onClose={closePosition}
+      />
+
+      {/* Trade Journal — closed trade history + win rate by setup */}
+      <TradeJournalCard
+        closedTrades={closedTrades || []}
       />
 
       {/* Watchlist — starred stocks, persisted in localStorage */}
@@ -3012,6 +3212,361 @@ function WatchlistCard({ watchlist, onAnalyze, onRemove }: {
                 ))}
               </TableBody>
             </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------- PositionsCard */
+function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing, onClose }: {
+  positions: Position[];
+  positionPrices: Record<string, number>;
+  onRefreshPrices?: () => void;
+  refreshing?: boolean;
+  onClose?: (positionId: string, exitPrice: number, reason: string) => void;
+}) {
+  // Track which position's inline close form is open + form values
+  const [closingId, setClosingId] = useState<string | null>(null);
+  const [exitPriceInput, setExitPriceInput] = useState<string>("");
+  const [exitReason, setExitReason] = useState<string>("Manual");
+
+  const startClose = (p: Position) => {
+    const livePrice = positionPrices[p.symbol] ?? p.entryPrice;
+    setClosingId(p.id);
+    setExitPriceInput(String(livePrice.toFixed(2)));
+    setExitReason("Manual");
+  };
+
+  const cancelClose = () => {
+    setClosingId(null);
+    setExitPriceInput("");
+    setExitReason("Manual");
+  };
+
+  const confirmClose = (p: Position) => {
+    const price = parseFloat(exitPriceInput);
+    if (isNaN(price) || price <= 0) {
+      toast({ title: "Invalid exit price", description: "Enter a valid positive number", variant: "destructive" });
+      return;
+    }
+    onClose?.(p.id, price, exitReason);
+    cancelClose();
+  };
+
+  // Status badge logic — within 2% of stop/target, within 1% of entry
+  const getStatusBadge = (p: Position, currentPrice: number) => {
+    if (currentPrice <= 0 || p.entryPrice <= 0) return <span className="text-muted-foreground text-[10px]">—</span>;
+    const nearSl = p.stopPrice > 0 && Math.abs(currentPrice - p.stopPrice) / p.stopPrice <= 0.02;
+    const nearT1 = p.target1 > 0 && Math.abs(currentPrice - p.target1) / p.target1 <= 0.02;
+    const nearT2 = p.target2 > 0 && Math.abs(currentPrice - p.target2) / p.target2 <= 0.02;
+    const atEntry = Math.abs(currentPrice - p.entryPrice) / p.entryPrice <= 0.01;
+    // Priority: SL > T2 > T1 > At Entry
+    if (nearSl) return <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">🔴 Near SL</span>;
+    if (nearT2) return <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">🟢 Near T2</span>;
+    if (nearT1) return <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">🟢 Near T1</span>;
+    if (atEntry) return <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">🟡 At Entry</span>;
+    return <span className="text-muted-foreground text-[10px]">—</span>;
+  };
+
+  return (
+    <Card className="card-pastel">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <div>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Wallet className="w-4 h-4 text-emerald-600" />
+            📋 Open Positions
+            <Badge variant="secondary" className="text-[10px] tabular-nums h-5">{positions.length}</Badge>
+          </CardTitle>
+          <CardDescription className="text-[10px] mt-0.5">
+            Paper trade tracker · auto-logs entry, stop, targets, P&L · saved in your browser
+          </CardDescription>
+        </div>
+        {positions.length > 0 && onRefreshPrices && (
+          <Button onClick={onRefreshPrices} disabled={refreshing} size="sm" variant="outline" className="h-7 text-[11px] gap-1 border-blue-300 text-blue-700 hover:bg-blue-50 shrink-0">
+            <RefreshCw className={`w-3 h-3 ${refreshing ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">{refreshing ? "Refreshing…" : "Refresh Prices"}</span>
+            <span className="sm:hidden">{refreshing ? "…" : "LTP"}</span>
+          </Button>
+        )}
+      </CardHeader>
+      <CardContent className="pt-0">
+        {positions.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
+            No open positions. Click &apos;Buy&apos; next to any stock to open a position.
+          </div>
+        ) : (
+          <div className="table-scroll-wrapper sticky-header-table max-h-[28rem] overflow-y-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-[10px]">Symbol</TableHead>
+                  <TableHead className="text-[10px] text-right">Entry ₹</TableHead>
+                  <TableHead className="text-[10px] text-right">Current ₹</TableHead>
+                  <TableHead className="text-[10px] text-right">Shares</TableHead>
+                  <TableHead className="text-[10px] text-right">P&L ₹</TableHead>
+                  <TableHead className="text-[10px] text-right">P&L %</TableHead>
+                  <TableHead className="text-[10px] text-right hidden md:table-cell">Stop ₹</TableHead>
+                  <TableHead className="text-[10px] text-right hidden md:table-cell">T1 ₹</TableHead>
+                  <TableHead className="text-[10px] text-right hidden lg:table-cell">T2 ₹</TableHead>
+                  <TableHead className="text-[10px] text-center">Status</TableHead>
+                  <TableHead className="text-[10px] text-right">Close</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {positions.map((p) => {
+                  const currentPrice = positionPrices[p.symbol] ?? p.entryPrice;
+                  const pnlRupees = (currentPrice - p.entryPrice) * p.shares;
+                  const pnlPct = ((currentPrice - p.entryPrice) / p.entryPrice) * 100;
+                  const pnlPos = pnlRupees >= 0;
+                  const isClosingThis = closingId === p.id;
+                  return (
+                    <Fragment key={p.id}>
+                      <TableRow>
+                        <TableCell>
+                          <div className="font-bold text-xs">{p.symbol}</div>
+                          <div className="text-[9px] text-muted-foreground line-clamp-1 max-w-[120px]">{p.longName}</div>
+                          <div className="mt-0.5">
+                            <SetupBadge type={(p.setupType as SetupType) || "UPTREND"} grade={(p.setupGrade as SetupGrade) || undefined} />
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-[11px]">{fmt(p.entryPrice)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-[11px] font-medium">
+                          {positionPrices[p.symbol] ? (
+                            <span title="Live (refreshed)">₹{fmt(currentPrice)}</span>
+                          ) : (
+                            <span className="text-muted-foreground" title="Not yet refreshed — showing entry price">₹{fmt(currentPrice)}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-[11px]">{p.shares}</TableCell>
+                        <TableCell className={`text-right tabular-nums text-[11px] font-semibold ${pnlPos ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                          {pnlPos ? "+" : "−"}₹{Math.abs(Math.round(pnlRupees)).toLocaleString("en-IN")}
+                        </TableCell>
+                        <TableCell className={`text-right tabular-nums text-[11px] font-semibold ${pnlPos ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                          {pnlPos ? "+" : ""}{pnlPct.toFixed(2)}%
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-[11px] text-red-600 dark:text-red-400 hidden md:table-cell">{fmt(p.stopPrice)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-[11px] text-emerald-600 dark:text-emerald-400 hidden md:table-cell">{fmt(p.target1)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-[11px] text-emerald-600 dark:text-emerald-400 hidden lg:table-cell">{fmt(p.target2)}</TableCell>
+                        <TableCell className="text-center">{getStatusBadge(p, currentPrice)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 border-red-300 text-red-700 hover:bg-red-50" onClick={() => startClose(p)} disabled={!onClose}>
+                            ✕ Close
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                      {isClosingThis && (
+                        <TableRow className="bg-muted/40">
+                          <TableCell colSpan={11} className="p-2">
+                            <div className="flex flex-wrap items-end gap-2 text-[11px]">
+                              <div className="flex flex-col gap-0.5">
+                                <Label className="text-[9px] text-muted-foreground">Exit Price (₹)</Label>
+                                <Input
+                                  type="number"
+                                  step="0.05"
+                                  min="0"
+                                  value={exitPriceInput}
+                                  onChange={(e) => setExitPriceInput(e.target.value)}
+                                  className="h-7 w-28 text-[11px] tabular-nums"
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") confirmClose(p);
+                                    if (e.key === "Escape") cancelClose();
+                                  }}
+                                />
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <Label className="text-[9px] text-muted-foreground">Exit Reason</Label>
+                                <Select value={exitReason} onValueChange={setExitReason}>
+                                  <SelectTrigger className="h-7 w-32 text-[11px]"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="Target 1">Target 1</SelectItem>
+                                    <SelectItem value="Target 2">Target 2</SelectItem>
+                                    <SelectItem value="Stop Loss">Stop Loss</SelectItem>
+                                    <SelectItem value="Manual">Manual</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              {(() => {
+                                const ep = parseFloat(exitPriceInput);
+                                if (!isNaN(ep) && ep > 0) {
+                                  const pR = (ep - p.entryPrice) * p.shares;
+                                  const pP = ((ep - p.entryPrice) / p.entryPrice) * 100;
+                                  return (
+                                    <div className="flex flex-col gap-0.5 text-[10px]">
+                                      <span className="text-muted-foreground">Preview P&L</span>
+                                      <span className={`font-semibold tabular-nums ${pR >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                        {pR >= 0 ? "+" : "−"}₹{Math.abs(Math.round(pR)).toLocaleString("en-IN")} ({pP >= 0 ? "+" : ""}{pP.toFixed(1)}%)
+                                      </span>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
+                              <div className="flex gap-1 ml-auto">
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={cancelClose}>Cancel</Button>
+                                <Button size="sm" variant="default" className="h-7 px-2 text-[10px] bg-red-600 hover:bg-red-700 text-white" onClick={() => confirmClose(p)}>Confirm Close</Button>
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ---------------------------------------------------------------- TradeJournalCard */
+function TradeJournalCard({ closedTrades }: {
+  closedTrades: ClosedTrade[];
+}) {
+  // Summary stats
+  const totalTrades = closedTrades.length;
+  const winners = closedTrades.filter(t => t.pnlRupees > 0).length;
+  const winRate = totalTrades > 0 ? (winners / totalTrades) * 100 : 0;
+  const totalPnl = closedTrades.reduce((a, t) => a + t.pnlRupees, 0);
+  const avgHoldDays = totalTrades > 0
+    ? closedTrades.reduce((a, t) => a + t.holdDays, 0) / totalTrades
+    : 0;
+
+  // Win rate by setup
+  const setupStats: Record<string, { wins: number; total: number }> = {};
+  for (const t of closedTrades) {
+    const key = t.setupType || "UNKNOWN";
+    if (!setupStats[key]) setupStats[key] = { wins: 0, total: 0 };
+    setupStats[key].total++;
+    if (t.pnlRupees > 0) setupStats[key].wins++;
+  }
+
+  const exitReasonBadge: Record<string, string> = {
+    "Target 1": "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+    "Target 2": "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+    "Stop Loss": "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+    "Manual": "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+  };
+
+  return (
+    <Card className="card-pastel">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <History className="w-4 h-4 text-primary" />
+          📊 Trade Journal
+          <Badge variant="secondary" className="text-[10px] tabular-nums h-5">{closedTrades.length}</Badge>
+        </CardTitle>
+        <CardDescription className="text-[10px] mt-0.5">
+          Closed trade history · win rate · P&L · performance by setup type · saved in your browser
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {closedTrades.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
+            No closed trades yet. Open and close positions to build your journal.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Summary stats — 4 boxes */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+                <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Total Trades</div>
+                <div className="text-lg font-bold tabular-nums">{totalTrades}</div>
+                <div className="text-[10px] text-muted-foreground">{winners}W / {totalTrades - winners}L</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+                <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Win Rate</div>
+                <div className={`text-lg font-bold tabular-nums ${winRate >= 50 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>{winRate.toFixed(0)}%</div>
+                <div className="text-[10px] text-muted-foreground">of closed trades</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+                <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Total P&L ₹</div>
+                <div className={`text-lg font-bold tabular-nums ${totalPnl >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                  {totalPnl >= 0 ? "+" : "−"}₹{Math.abs(Math.round(totalPnl)).toLocaleString("en-IN")}
+                </div>
+                <div className="text-[10px] text-muted-foreground">net realized</div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-card/60 p-3">
+                <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Avg Hold Days</div>
+                <div className="text-lg font-bold tabular-nums">{avgHoldDays.toFixed(1)}</div>
+                <div className="text-[10px] text-muted-foreground">per trade</div>
+              </div>
+            </div>
+
+            {/* Closed trades table */}
+            <div className="table-scroll-wrapper sticky-header-table max-h-96 overflow-y-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-[10px]">Symbol</TableHead>
+                    <TableHead className="text-[10px]">Setup</TableHead>
+                    <TableHead className="text-[10px]">Entry Date</TableHead>
+                    <TableHead className="text-[10px]">Exit Date</TableHead>
+                    <TableHead className="text-[10px] text-right">Hold (d)</TableHead>
+                    <TableHead className="text-[10px] text-right">Entry ₹</TableHead>
+                    <TableHead className="text-[10px] text-right">Exit ₹</TableHead>
+                    <TableHead className="text-[10px] text-right">P&L ₹</TableHead>
+                    <TableHead className="text-[10px] text-right">P&L %</TableHead>
+                    <TableHead className="text-[10px] text-center">Exit Reason</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[...closedTrades].reverse().map((t) => {
+                    const pnlPos = t.pnlRupees >= 0;
+                    return (
+                      <TableRow key={t.id}>
+                        <TableCell>
+                          <div className="font-semibold text-xs">{t.symbol}</div>
+                          <div className="text-[9px] text-muted-foreground line-clamp-1 max-w-[120px]">{t.longName}</div>
+                        </TableCell>
+                        <TableCell>
+                          <SetupBadge type={(t.setupType as SetupType) || "UPTREND"} />
+                        </TableCell>
+                        <TableCell className="text-[10px] tabular-nums text-muted-foreground">{fmtISTDate(t.entryDate)}</TableCell>
+                        <TableCell className="text-[10px] tabular-nums text-muted-foreground">{fmtISTDate(t.exitDate)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-[10px]">{t.holdDays}</TableCell>
+                        <TableCell className="text-right tabular-nums text-[10px]">{fmt(t.entryPrice)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-[10px]">{fmt(t.exitPrice)}</TableCell>
+                        <TableCell className={`text-right tabular-nums text-[10px] font-semibold ${pnlPos ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                          {pnlPos ? "+" : "−"}₹{Math.abs(Math.round(t.pnlRupees)).toLocaleString("en-IN")}
+                        </TableCell>
+                        <TableCell className={`text-right tabular-nums text-[10px] font-semibold ${pnlPos ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                          {pnlPos ? "+" : ""}{t.pnlPct.toFixed(2)}%
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold ${exitReasonBadge[t.exitReason] || exitReasonBadge.Manual}`}>
+                            {t.exitReason}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/* Win Rate by Setup mini-summary */}
+            <div className="rounded-lg border border-border/60 bg-muted/40 p-3">
+              <div className="text-[10px] font-semibold text-muted-foreground mb-2">Win Rate by Setup</div>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(setupStats).map(([setup, st]) => {
+                  const wr = st.total > 0 ? (st.wins / st.total) * 100 : 0;
+                  const tone = wr >= 60 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                    : wr >= 40 ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                    : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300";
+                  return (
+                    <span key={setup} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold ${tone}`}>
+                      {setup}: {wr.toFixed(0)}% ({st.wins}/{st.total})
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
       </CardContent>
