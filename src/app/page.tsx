@@ -927,7 +927,8 @@ export default function Home() {
   const stabilityData = useMemo(() => {
     if (!screen?.top10 || screenHistory.length === 0) return {};
     const recent = screenHistory.slice(-3);
-    const result: Record<string, { smoothedScore: number; stability: string; consensus: boolean; appearances: number; prevRanks: number[] }> = {};
+    const allSnaps = screenHistory; // all snapshots for total appearances
+    const result: Record<string, { smoothedScore: number; stability: string; consensus: boolean; appearances: number; prevRanks: number[]; totalAppearances: number; totalRuns: number; bestRank: number }> = {};
     for (const stock of screen.top10) {
       const sym = stock.symbol;
       const scores: number[] = [];
@@ -936,6 +937,13 @@ export default function Home() {
       for (const snap of recent) {
         const found = snap.stocks.find((s: any) => s.symbol === sym);
         if (found) { scores.push(found.signalScore); ranks.push(found.rank); appearances++; }
+      }
+      // Total appearances across ALL runs (not just last 3)
+      let totalAppearances = 0;
+      let bestRank = 999;
+      for (const snap of allSnaps) {
+        const found = snap.stocks.find((s: any) => s.symbol === sym);
+        if (found) { totalAppearances++; if (found.rank < bestRank) bestRank = found.rank; }
       }
       let smoothedScore = stock.signalScore ?? 0;
       if (scores.length >= 2) {
@@ -952,7 +960,7 @@ export default function Home() {
         else stability = "ERRATIC";
       }
       const consensus = appearances >= 2;
-      result[sym] = { smoothedScore, stability, consensus, appearances, prevRanks: ranks };
+      result[sym] = { smoothedScore, stability, consensus, appearances, prevRanks: ranks, totalAppearances, totalRuns: allSnaps.length, bestRank: bestRank === 999 ? stock.rank : bestRank };
     }
     return result;
   }, [screen?.runAt, screenHistory]);
@@ -3022,6 +3030,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                       <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("signalScore")}>Signal <SortIcon col="signalScore" /></TableHead>
                       <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("smoothed")}>Smooth <SortIcon col="smoothed" /></TableHead>
                       <TableHead className="text-center">Stability</TableHead>
+                      <TableHead className="text-center cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("hits")}>Hits <SortIcon col="hits" /></TableHead>
                       <TableHead className="text-center hidden lg:table-cell">Trend</TableHead>
                       <TableHead className="text-right hidden md:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("stopPrice")}>Stop (₹) <SortIcon col="stopPrice" /></TableHead>
                       <TableHead className="text-right hidden md:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("riskReward")}>R:R <SortIcon col="riskReward" /></TableHead>
@@ -3093,6 +3102,22 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                         </TableCell>
                         <TableCell className="text-center">
                           <StabilityBadge stability={stabilityData?.[s.symbol]?.stability ?? "NEW"} smoothedScore={stabilityData?.[s.symbol]?.smoothedScore} />
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {(() => {
+                            const info = stabilityData?.[s.symbol];
+                            if (!info || info.totalAppearances === 0) return <span className="text-[10px] text-muted-foreground">1/{info?.totalRuns || 1}</span>;
+                            const hits = info.totalAppearances;
+                            const total = info.totalRuns;
+                            const pct = (hits / total) * 100;
+                            const color = pct >= 80 ? "text-emerald-600" : pct >= 50 ? "text-amber-600" : "text-muted-foreground";
+                            return (
+                              <div className="flex flex-col items-center">
+                                <span className={`text-[10px] font-bold tabular-nums ${color}`}>{hits}/{total}</span>
+                                <span className="text-[8px] text-muted-foreground">best #{info.bestRank}</span>
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-center hidden lg:table-cell">
                           <Sparkline prices={sparklineData?.[s.symbol] || []} width={50} height={18} />
