@@ -1972,7 +1972,7 @@ function TradePlanField({ label, value, tone }: { label: string; value: string; 
 function TradePlanCard({ stocks, regime, rrOverride, setRrOverride }: { stocks: ScreenedStock[]; regime: RegimeState | null; rrOverride: { t1: number; t2: number } | null; setRrOverride: ((v: { t1: number; t2: number } | null) => void) | null }) {
   if (stocks.length === 0) return null;
   const sizeMult = regime?.sizeMultiplier ?? 1;
-  const defaultRiskPerTrade = 1000; // ₹1000 risk per trade for illustration
+  const defaultRiskPerTrade = 2000; // ₹2000 risk per trade for illustration
   return (
     <Card className="card-pastel">
       <CardHeader>
@@ -1993,7 +1993,7 @@ function TradePlanCard({ stocks, regime, rrOverride, setRrOverride }: { stocks: 
             const t1 = s.entryPrice + Math.max(0, riskPerShare) * rr.t1;
             const t2 = s.entryPrice + Math.max(0, riskPerShare) * rr.t2;
             const rrRatio = riskPerShare > 0 ? (t2 - s.entryPrice) / riskPerShare : 0;
-            const posSize = sizeMult > 0 ? Math.round((defaultRiskPerTrade * sizeMult) / Math.max(0.01, Math.abs(riskPerShare))) : 0;
+            const posSize = sizeMult > 0 ? Math.max(1, Math.round((defaultRiskPerTrade * sizeMult) / Math.max(0.01, Math.abs(riskPerShare)))) : 0;
             const riskRupees = posSize * Math.abs(riskPerShare);
             const t2Gain = posSize * (t2 - s.entryPrice);
             return (
@@ -2180,8 +2180,8 @@ function AnalyzeResultCard({ data, regime, rrOverride, setRrOverride }: { data: 
   const t1 = data.entryPrice + Math.max(0, riskPerShare) * rr.t1;
   const t2 = data.entryPrice + Math.max(0, riskPerShare) * rr.t2;
   const rrRatio = riskPerShare > 0 ? (t2 - data.entryPrice) / riskPerShare : 0;
-  const defaultRiskPerTrade = 1000;
-  const posSize = sizeMult > 0 ? Math.round((defaultRiskPerTrade * sizeMult) / Math.max(0.01, Math.abs(riskPerShare))) : 0;
+  const defaultRiskPerTrade = 2000;
+  const posSize = sizeMult > 0 ? Math.max(1, Math.round((defaultRiskPerTrade * sizeMult) / Math.max(0.01, Math.abs(riskPerShare)))) : 0;
   const riskRupees = posSize * Math.abs(riskPerShare);
   const t2Gain = posSize * (t2 - data.entryPrice);
 
