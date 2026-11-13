@@ -18,7 +18,7 @@ import {
   Activity, ArrowDown, ArrowUp, RefreshCw, AlertTriangle,
   ShieldAlert, TrendingUp, TrendingDown, Gauge, Wallet, Target, Zap, Timer, Clock,
   Bell, BellRing, History, GitCompare, SlidersHorizontal, Search, Star, Send,
-  Plus, Pencil,
+  Plus, Pencil, Info,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -1825,6 +1825,16 @@ const SETUP_META: Record<SetupType, { emoji: string; label: string; cls: string 
   UPTREND:      { emoji: "⚪", label: "Uptrend",      cls: "bg-muted text-muted-foreground" },
 };
 
+// What each setup type means + suggested action
+const SETUP_EXPLAINER: Record<SetupType, { indicates: string; action: string }> = {
+  BREAKOUT:     { indicates: "Price just cleared a prior resistance / consolidation high on above-average volume.", action: "Fresh entry on breakout day; stop below breakout candle." },
+  PULLBACK:     { indicates: "In an uptrend but pulling back to a support MA (20/50); shallow, low-volume dip.", action: "Buy the dip; stop below the pullback low." },
+  TIGHTENING:   { indicates: "Volatility contracting inside a narrow range (coil / flag); energy building.", action: "Wait for the breakout direction; tight stop on failure." },
+  EXTENDED:     { indicates: "Uptrend but price >5–8% above its 20-MA — too far, mean-reversion risk high.", action: "No new chase; wait for a pullback or trim existing." },
+  DISTRIBUTION: { indicates: "Heavy volume on down days, rising volatility, price under a key MA — sellers in control.", action: "Avoid / exit longs; this is a warning, not a buy." },
+  UPTREND:      { indicates: "Price above rising 20/50/200-MA but no specific trigger this session — trend intact.", action: "Hold existing; add only on a confirmed pullback." },
+};
+
 function SetupBadge({ type, grade }: { type: SetupType; grade?: SetupGrade }) {
   const m = SETUP_META[type] ?? SETUP_META.UPTREND;
   const gradeCls = grade === "A+" ? "pastel-positive"
@@ -1850,6 +1860,63 @@ function SignalScoreBadge({ score }: { score: number }) {
     : score >= 50 ? "pastel-warning"
     : "bg-muted text-muted-foreground";
   return <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold tabular-nums ${cls}`}>{score.toFixed(0)}</span>;
+}
+
+// Setup Legend — what each setup type indicates, shown below the momentum table
+function SetupLegendCard() {
+  const order: SetupType[] = ["BREAKOUT", "PULLBACK", "UPTREND", "TIGHTENING", "EXTENDED", "DISTRIBUTION"];
+  const grades: { g: SetupGrade; desc: string }[] = [
+    { g: "A+", desc: "Highest conviction — best setup + strongest momentum" },
+    { g: "A",  desc: "Strong setup, well-aligned trend" },
+    { g: "B",  desc: "Acceptable — trade with smaller size" },
+    { g: "C",  desc: "Marginal — skip unless confirming" },
+  ];
+  return (
+    <Card className="card-pastel">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <Info className="w-4 h-4 text-muted-foreground" /> Setup Legend — what the badges mean
+        </CardTitle>
+        <CardDescription className="text-xs">
+          The <span className="font-semibold">Setup</span> column tags each stock with its current chart pattern. Here&rsquo;s what each indicates and how to act on it.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {order.map((t) => {
+            const m = SETUP_META[t];
+            const ex = SETUP_EXPLAINER[t];
+            return (
+              <div key={t} className="rounded-md border border-border/50 bg-card/40 p-2 space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold ${m.cls}`}>
+                    <span className="text-[9px]">{m.emoji}</span>{m.label}
+                  </span>
+                  <span className="text-[9px] text-muted-foreground tabular-nums">R:R {RR_PRESETS[t].t1}/{RR_PRESETS[t].t2}</span>
+                </div>
+                <p className="text-[11px] text-foreground/90 leading-snug"><b>Indicates:</b> {ex.indicates}</p>
+                <p className="text-[11px] text-muted-foreground leading-snug"><b>Action:</b> {ex.action}</p>
+              </div>
+            );
+          })}
+        </div>
+        <div className="pt-1.5 border-t border-border/40">
+          <p className="text-[10px] font-semibold text-muted-foreground mb-1">Grade (next to setup) — conviction tier:</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-1.5">
+            {grades.map(({ g, desc }) => {
+              const gCls = g === "A+" ? "pastel-positive" : g === "A" ? "pastel-info" : g === "B" ? "pastel-warning" : "bg-muted text-muted-foreground";
+              return (
+                <div key={g} className="flex items-start gap-1.5">
+                  <span className={`inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold shrink-0 ${gCls}`}>{g}</span>
+                  <span className="text-[10px] text-muted-foreground leading-tight">{desc}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 function VolMultBadge({ mult, tag }: { mult: number; tag?: "ACCUM" | "DIST" | "NEUTRAL" }) {
@@ -3160,6 +3227,11 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
             </Table>
           </div>
           )}
+
+          {/* Setup legend — what each badge in the Setup column means */}
+          <div className="mt-3">
+            <SetupLegendCard />
+          </div>
         </CardContent>
       </Card>
 
