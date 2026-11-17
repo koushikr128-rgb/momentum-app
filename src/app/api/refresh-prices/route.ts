@@ -65,7 +65,7 @@ for sym in symbols:
         pass
 print(json.dumps(result))
 `;
-        const { stdout } = await execAsync(`python3 -c '${pythonCode.replace(/'/g, "'\\''")}'`, { timeout: 20000 });
+        const { stdout } = await execAsync(`python3 -c '${pythonCode.replace(/'/g, "'\\''")}'`, { timeout: 20000, env: { ...process.env, PYTHONPATH: "/home/z/my-project/pylibs" } });
         const prices = JSON.parse(stdout.trim());
         for (const [sym, price] of Object.entries(prices)) {
           const stock = stocks.find((s: any) => s.symbol === sym);

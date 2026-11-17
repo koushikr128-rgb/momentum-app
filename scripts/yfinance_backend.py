@@ -829,14 +829,19 @@ def cmd_nifty():
 
         close = nifty["Close"].squeeze().dropna()
         volume = nifty["Volume"].squeeze().dropna() if "Volume" in nifty.columns else pd.Series(dtype=float)
+        # Squeeze each OHLC column to a Series once — newer pandas returns a 1-col DataFrame,
+        # so `.iloc[i]` would yield a Series (not a scalar) and float() would throw.
+        open_s = nifty["Open"].squeeze() if "Open" in nifty.columns else close
+        high_s = nifty["High"].squeeze() if "High" in nifty.columns else close
+        low_s = nifty["Low"].squeeze() if "Low" in nifty.columns else close
         candles = []
         for i in range(len(nifty)):
             ts = nifty.index[i]
             epoch = int(ts.timestamp()) if hasattr(ts, "timestamp") else int(pd.Timestamp(ts).timestamp())
-            row_open = float(nifty["Open"].iloc[i]) if "Open" in nifty.columns else float(close.iloc[i])
-            row_high = float(nifty["High"].iloc[i]) if "High" in nifty.columns else float(close.iloc[i])
-            row_low = float(nifty["Low"].iloc[i]) if "Low" in nifty.columns else float(close.iloc[i])
-            row_close = float(nifty["Close"].iloc[i])
+            row_open = float(open_s.iloc[i])
+            row_high = float(high_s.iloc[i])
+            row_low = float(low_s.iloc[i])
+            row_close = float(close.iloc[i])
             row_vol = float(volume.iloc[i]) if len(volume) > i else 0.0
             candles.append({"timestamp": epoch, "open": row_open, "high": row_high, "low": row_low, "close": row_close, "volume": row_vol})
 

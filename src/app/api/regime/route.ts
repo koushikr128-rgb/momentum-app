@@ -57,6 +57,7 @@ async function fetchNiftyViaPython(): Promise<{
     const { stdout, stderr } = await execAsync(`python3 ${scriptPath} nifty`, {
       timeout: 25000,
       maxBuffer: 10 * 1024 * 1024,
+      env: { ...process.env, PYTHONPATH: "/home/z/my-project/pylibs" },
     });
     if (stderr) console.error("[regime] Python stderr:", stderr.slice(0, 200));
     const data = JSON.parse(stdout);

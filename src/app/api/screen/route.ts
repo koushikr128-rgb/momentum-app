@@ -19,8 +19,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const PYTHON = "/home/z/.venv/bin/python3";
+const PYTHON = "/usr/bin/python3";
 const SCRIPT = "/home/z/my-project/scripts/yfinance_backend.py";
+// yfinance + deps installed to a project-local dir that survives sandbox recycles
+const PY_ENV = { ...process.env, PYTHONPATH: "/home/z/my-project/pylibs" };
 
 // Render Python backend URL (set as env var on Vercel)
 const RENDER_URL = process.env.RENDER_URL || "";
@@ -210,15 +212,15 @@ async function tryLocalPython(topN: number, rsiMin: number, mcapMin: number, vol
     // Check if yfinance is installed
     const { stdout: checkOut } = await execFileAsync(
       PYTHON, ["-c", "import yfinance; print('OK')"],
-      { timeout: 10_000 }
+      { timeout: 10_000, env: PY_ENV }
     ).catch(() => ({ stdout: "", stderr: "import failed" }));
 
     if (!checkOut.includes("OK")) {
-      // yfinance not installed — install in background, return null (will fall through to published data)
+      // yfinance not installed — install to the persistent project dir, return null (will fall through to published data)
       console.log("[screen] yfinance missing — installing in background...");
       execFileAsync(
-        PYTHON, ["-m", "pip", "install", "yfinance", "curl_cffi", "pandas", "numpy", "--quiet"],
-        { timeout: 120_000 }
+        PYTHON, ["-m", "pip", "install", "yfinance", "curl_cffi", "pandas", "numpy", "--quiet", "--target", "/home/z/my-project/pylibs"],
+        { timeout: 120_000, env: PY_ENV }
       ).then(() => console.log("[screen] yfinance installed in background")).catch(() => {});
       return null; // Fall through to published data or CSV fallback
     }
@@ -227,7 +229,7 @@ async function tryLocalPython(topN: number, rsiMin: number, mcapMin: number, vol
     const { stdout } = await execFileAsync(
       PYTHON,
       [SCRIPT, "screen", String(topN), filtersJson],
-      { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 }
+      { timeout: 240_000, maxBuffer: 50 * 1024 * 1024, env: PY_ENV }
     );
     const lastLine = stdout.trim().split("\n").pop();
     if (!lastLine) return null;

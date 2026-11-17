@@ -53,6 +53,16 @@ echo "→ Restarting dev server..."
 pkill -9 -f "next" 2>/dev/null || true
 sleep 2
 rm -rf .next/dev/lock 2>/dev/null || true
+# Ensure yfinance is in the persistent project-local pylibs dir (survives sandbox recycles)
+if ! PYTHONPATH=/home/z/my-project/pylibs /usr/bin/python3 -c "import yfinance" 2>/dev/null; then
+  echo "→ Installing yfinance to /home/z/my-project/pylibs (persistent)..."
+  /usr/bin/python3 -m pip install -q --target=/home/z/my-project/pylibs yfinance pandas numpy curl_cffi 2>/dev/null || true
+fi
+# Export PYTHONPATH so EVERY api route that spawns `python3` finds yfinance
+export PYTHONPATH=/home/z/my-project/pylibs
+# Ensure bare `python3` resolves to /usr/bin/python3 (3.13) which matches the pylibs wheels.
+# The default `python3` is /home/z/.venv/bin/python3 (3.12) whose wheels don't persist + mismatch pylibs.
+export PATH="/usr/bin:$PATH"
 nohup setsid -f npm run dev > dev.log 2>&1 < /dev/null
 sleep 5
 
