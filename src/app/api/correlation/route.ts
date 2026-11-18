@@ -11,8 +11,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const PYTHON = "/home/z/.venv/bin/python3";
+const PYTHON = "/usr/bin/python3";
 const SCRIPT = "/home/z/my-project/scripts/correlation_backend.py";
+const PY_ENV = { ...process.env, PYTHONPATH: "/home/z/my-project/pylibs" };
 
 export async function POST(req: Request) {
   try {
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
     const payload = JSON.stringify({ symbols });
 
     const result = await new Promise<string>((resolve, reject) => {
-      const py = spawn(PYTHON, [SCRIPT]);
+      const py = spawn(PYTHON, [SCRIPT], { env: PY_ENV });
       let stdout = "";
       let stderr = "";
       py.stdin.write(payload);

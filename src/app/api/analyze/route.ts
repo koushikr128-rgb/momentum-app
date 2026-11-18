@@ -60,7 +60,7 @@ export async function GET(req: Request) {
       const scriptPath = path.join(process.cwd(), "scripts", "yfinance_backend.py");
       const { stdout } = await execAsync(
         `python3 ${scriptPath} analyze ${clean}`,
-        { timeout: 25000, maxBuffer: 5 * 1024 * 1024 }
+        { timeout: 25000, maxBuffer: 5 * 1024 * 1024, env: { ...process.env, PYTHONPATH: "/home/z/my-project/pylibs" } }
       );
       const data = JSON.parse(stdout);
       if (data.error) {

@@ -45,7 +45,7 @@ for sym in symbols:
         pass
 print(json.dumps(result))
 `;
-      const { stdout } = await execAsync(`python3 -c '${pythonCode.replace(/'/g, "'\\''")}'`, { timeout: 25000 });
+      const { stdout } = await execAsync(`python3 -c '${pythonCode.replace(/'/g, "'\\''")}'`, { timeout: 25000, env: { ...process.env, PYTHONPATH: "/home/z/my-project/pylibs" } });
       const sparklines = JSON.parse(stdout.trim());
       if (Object.keys(sparklines).length > 0) {
         return NextResponse.json({ sparklines, source: "python" });

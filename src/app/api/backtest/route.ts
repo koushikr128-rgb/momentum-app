@@ -10,8 +10,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const PYTHON = "/home/z/.venv/bin/python3";
+const PYTHON = "/usr/bin/python3";
 const SCRIPT = "/home/z/my-project/scripts/backtest_backend.py";
+const PY_ENV = { ...process.env, PYTHONPATH: "/home/z/my-project/pylibs" };
 
 // 1-hour cache — backtest takes ~30-60s and rarely changes intra-day
 let cache: { data: unknown; ts: number } | null = null;
@@ -27,6 +28,7 @@ export async function GET() {
     const { stdout, stderr } = await execFileAsync(PYTHON, [SCRIPT], {
       timeout: 280_000,
       maxBuffer: 50 * 1024 * 1024,
+      env: PY_ENV,
     });
     void stderr;
     const data = JSON.parse(stdout.trim().split("\n").pop() as string);

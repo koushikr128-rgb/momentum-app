@@ -47,7 +47,7 @@ export async function GET(req: Request) {
       const scriptPath = path.join(process.cwd(), "scripts", "yfinance_backend.py");
       const { stdout, stderr } = await execAsync(
         `python3 ${scriptPath} bridge_screen ${topN} '${JSON.stringify(filters)}'`,
-        { timeout: 110000, maxBuffer: 20 * 1024 * 1024 }
+        { timeout: 110000, maxBuffer: 20 * 1024 * 1024, env: { ...process.env, PYTHONPATH: "/home/z/my-project/pylibs" } }
       );
       const data = JSON.parse(stdout);
       return NextResponse.json(data);

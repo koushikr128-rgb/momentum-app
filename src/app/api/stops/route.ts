@@ -14,8 +14,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const PYTHON = "/home/z/.venv/bin/python3";
+const PYTHON = "/usr/bin/python3";
 const SCRIPT = "/home/z/my-project/scripts/yfinance_backend.py";
+const PY_ENV = { ...process.env, PYTHONPATH: "/home/z/my-project/pylibs" };
 
 export async function POST(req: Request) {
   try {
@@ -67,12 +68,12 @@ export async function POST(req: Request) {
 
 async function tryPythonStops(alloc: AllocationStock[]) {
   try {
-    // Auto-install yfinance if missing
-    await execFileAsync(PYTHON, ["-c", "import yfinance"], { timeout: 10_000 }).catch(async () => {
+    // Auto-install yfinance if missing (to the persistent project dir)
+    await execFileAsync(PYTHON, ["-c", "import yfinance"], { timeout: 10_000, env: PY_ENV }).catch(async () => {
       console.log("[stops] yfinance missing, auto-installing...");
       await execFileAsync(
-        PYTHON, ["-m", "pip", "install", "yfinance", "pandas", "numpy", "--quiet"],
-        { timeout: 120_000 }
+        PYTHON, ["-m", "pip", "install", "yfinance", "pandas", "numpy", "--quiet", "--target", "/home/z/my-project/pylibs"],
+        { timeout: 120_000, env: PY_ENV }
       );
     });
 
@@ -86,7 +87,7 @@ async function tryPythonStops(alloc: AllocationStock[]) {
 
     const { stdout } = await execFileAsync(
       PYTHON, [SCRIPT, "stops", payload],
-      { timeout: 60_000, maxBuffer: 20 * 1024 * 1024 }
+      { timeout: 60_000, maxBuffer: 20 * 1024 * 1024, env: PY_ENV }
     );
     const lastLine = stdout.trim().split("\n").pop();
     if (!lastLine) return null;
