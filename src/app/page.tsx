@@ -2308,6 +2308,7 @@ function AnalyzeResultCard({ data, regime, rrOverride, setRrOverride }: { data: 
                 <h2 className="text-lg font-bold text-foreground">{data.symbol}</h2>
                 <SetupBadge type={data.setupType} grade={data.setupGrade} />
                 <SignalScoreBadge score={data.signalScore} />
+                <McapBadge mcapCr={data.marketCapCr} showValue />
               </div>
               <p className="text-[11px] text-muted-foreground mt-0.5">{data.longName} · {data.sector}</p>
             </div>
@@ -2728,6 +2729,7 @@ function BridgeTradePlanCard({ stocks, regime }: { stocks: any[]; regime: Regime
                       <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${s.macroFilterPass ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"}`}>
                         RSI {s.monthlyRsi?.toFixed(0)}
                       </span>
+                      <McapBadge mcapCr={s.marketCapCr} />
                     </div>
                     <div className="text-[10px] text-muted-foreground line-clamp-1 max-w-[180px]">{s.longName}</div>
                   </div>
@@ -3132,7 +3134,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                       <TableHead className="hidden md:table-cell">Sector</TableHead>
                       <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("currentPrice")}>Price (₹) <SortIcon col="currentPrice" /></TableHead>
                       <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("rsi14")}>RSI <SortIcon col="rsi14" /></TableHead>
-                      <TableHead className="text-right hidden sm:table-cell">MCap (₹Cr)</TableHead>
+                      <TableHead className="text-right hidden sm:table-cell">M.Cap</TableHead>
                       <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("ret1wPct")}>1W % <SortIcon col="ret1wPct" /></TableHead>
                       <TableHead className="text-right cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("ret1mPct")}>1M % <SortIcon col="ret1mPct" /></TableHead>
                       <TableHead className="text-right hidden sm:table-cell cursor-pointer select-none hover:text-primary" onClick={() => toggleSort("ret3mPct")}>3M % <SortIcon col="ret3mPct" /></TableHead>
@@ -3201,7 +3203,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
                         <TableCell className="text-right">
                           <RsiBadge rsi={s.rsi14} />
                         </TableCell>
-                        <TableCell className="text-right hidden sm:table-cell tabular-nums">{fmt(s.marketCapCr, 0)}</TableCell>
+                        <TableCell className="text-right hidden sm:table-cell"><McapBadge mcapCr={s.marketCapCr} showValue /></TableCell>
                         <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1wPct} /></TableCell>
                         <TableCell className="text-right tabular-nums"><ReturnCell pct={s.ret1mPct} /></TableCell>
                         <TableCell className="text-right hidden sm:table-cell tabular-nums"><ReturnCell pct={s.ret3mPct} /></TableCell>
@@ -4871,6 +4873,28 @@ function ReturnCell({ pct, rupeeMode }: { pct: number; rupeeMode?: boolean }) {
 function RsiBadge({ rsi }: { rsi: number }) {
   const cls = rsi > 80 ? "pastel-negative" : rsi > 70 ? "pastel-warning" : rsi > 55 ? "pastel-positive" : "pastel-purple";
   return <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold tabular-nums ${cls}`}>{rsi.toFixed(1)}</span>;
+}
+
+// Market-cap category badge — classifies a stock by its free-float market cap (₹ Cr)
+// using SEBI-aligned thresholds. Returns { label, cls } so callers can show the
+// badge alone or alongside the raw figure.
+function mcapCategory(mcapCr: number): { label: string; cls: string } {
+  if (isNaN(mcapCr) || mcapCr <= 0) return { label: "—", cls: "pastel-red" };
+  if (mcapCr >= 200000) return { label: "Mega", cls: "pastel-purple" };      // ≥ ₹2L Cr (top bluechips)
+  if (mcapCr >= 20000) return { label: "Large", cls: "pastel-info" };        // ₹20K–2L Cr (SEBI large-cap zone)
+  if (mcapCr >= 5000) return { label: "Mid", cls: "pastel-green" };          // ₹5K–20K Cr (SEBI mid-cap zone)
+  if (mcapCr >= 1000) return { label: "Small", cls: "pastel-amber" };        // ₹1K–5K Cr
+  return { label: "Micro", cls: "pastel-peach" };                            // < ₹1K Cr
+}
+
+function McapBadge({ mcapCr, showValue = false }: { mcapCr: number; showValue?: boolean }) {
+  const { label, cls } = mcapCategory(mcapCr);
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold ${cls}`}>{label}</span>
+      {showValue && mcapCr > 0 && <span className="text-[10px] tabular-nums text-muted-foreground">₹{fmt(mcapCr, 0)} Cr</span>}
+    </span>
+  );
 }
 
 function StatusBadge({ status }: { status: "HOLD" | "WATCH" | "EXIT" }) {

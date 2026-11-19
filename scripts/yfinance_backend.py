@@ -897,11 +897,15 @@ def _lookup_csv(symbol: str) -> dict:
             match = df[df["Symbol"].str.upper().str.replace("-", "").str.replace(".NS", "") == symbol.upper().replace("-", "")]
         if len(match) > 0:
             row = match.iloc[0]
+            # The CSV's market-cap column is named "Market Capital (? Cr)" (the ? is a
+            # mangled ₹ symbol) — match it robustly by substring so renames don't break it.
+            mc_col = next((c for c in df.columns if "Market Cap" in str(c) or "Market Capital" in str(c)), None)
+            _mc_raw = str(row.get(mc_col, 0)) if mc_col else "0"
             return {
                 "longName": str(row.get("Company Name", row.get("Name", symbol))),
-                "sector": str(row.get("Sector", "—")),
-                "industry": str(row.get("Industry", "—")),
-                "marketCapCr": float(str(row.get("Market Cap (Rs. Cr.)", row.get("MarketCap", 0))).replace("?", "").replace(",", "") or 0),
+                "sector": str(row.get("Sector", row.get("Industry", "—"))),
+                "industry": str(row.get("Industry", row.get("Sector", "—"))),
+                "marketCapCr": float(_mc_raw.replace("?", "").replace("₹", "").replace(",", "").strip() or 0),
             }
     except Exception:
         pass
