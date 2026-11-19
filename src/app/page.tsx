@@ -691,6 +691,51 @@ export default function Home() {
     });
   }, []);
 
+  // Partial exit — sell a portion of a position. Records a ClosedTrade for the
+  // exited lot at the given exitPrice, reduces the remaining shares on the open
+  // position. If the requested qty equals (or exceeds) the held qty, behaves as a full close.
+  const partialClosePosition = useCallback((positionId: string, exitPrice: number, sharesToExit: number, reason: string) => {
+    setPositions(prev => {
+      const pos = prev.find(p => p.id === positionId);
+      if (!pos) return prev;
+      const exitShares = Math.max(0, Math.min(Math.floor(sharesToExit), pos.shares));
+      if (exitShares <= 0) {
+        toast({ title: "Invalid quantity", description: "Enter a quantity greater than 0", variant: "destructive" });
+        return prev;
+      }
+      const pnlRupees = (exitPrice - pos.entryPrice) * exitShares;
+      const pnlPct = ((exitPrice - pos.entryPrice) / pos.entryPrice) * 100;
+      const holdDays = Math.floor((Date.now() - new Date(pos.entryDate).getTime()) / (1000 * 60 * 60 * 24));
+      const closed: ClosedTrade = {
+        ...pos,
+        shares: exitShares,
+        exitPrice,
+        exitDate: new Date().toISOString(),
+        pnlRupees,
+        pnlPct,
+        holdDays,
+        exitReason: reason,
+      };
+      setClosedTrades(prev2 => [...prev2, closed]);
+      const remaining = pos.shares - exitShares;
+      // Full close (nothing left) — same path as closePosition
+      if (remaining <= 0) {
+        toast({ title: "✅ Position Closed", description: `${pos.symbol} — P&L: ${pnlRupees >= 0 ? "+" : ""}₹${Math.round(pnlRupees).toLocaleString("en-IN")} (${pnlPct.toFixed(1)}%)` });
+        setPositionPrices(prevP => {
+          const stillOpen = prev.filter(p => p.symbol === pos.symbol && p.id !== pos.id);
+          if (stillOpen.length > 0) return prevP;
+          const next = { ...prevP };
+          delete next[pos.symbol];
+          return next;
+        });
+        return prev.filter(p => p.id !== positionId);
+      }
+      // Partial exit — keep the position with reduced shares
+      toast({ title: "🔓 Partial Exit", description: `${pos.symbol} — exited ${exitShares}/${pos.shares} @ ₹${exitPrice.toFixed(2)}. P&L: ${pnlRupees >= 0 ? "+" : ""}₹${Math.round(pnlRupees).toLocaleString("en-IN")} (${pnlPct.toFixed(1)}%). ${remaining} shares remain.` });
+      return prev.map(p => p.id === positionId ? { ...p, shares: remaining } : p);
+    });
+  }, []);
+
   const isPositionOpen = useCallback((symbol: string) => {
     return positions.some(p => p.symbol === symbol);
   }, [positions]);
@@ -1587,7 +1632,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={setTab} className="w-full mt-3">
           {/* ============================== Screen tab ============================== */}
           <TabsContent value="screen" className="mt-0 focus-visible:outline-none">
-            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} watchlist={watchlist} addToWatchlist={addToWatchlist} removeFromWatchlist={removeFromWatchlist} isInWatchlist={isInWatchlist} onAnalyzeWatchlist={(sym) => { setTab("analyze"); runAnalyze(sym); }} telegramConfig={telegramConfig} setTelegramConfig={setTelegramConfig} sendTelegramAlert={sendTelegramAlert} stabilityData={stabilityData} positions={positions} openPosition={openPosition} closePosition={closePosition} isPositionOpen={isPositionOpen} positionPrices={positionPrices} refreshPositionPrices={refreshPositionPrices} positionPricesLoading={positionPricesLoading} closedTrades={closedTrades} manualOpenPosition={manualOpenPosition} updatePosition={updatePosition} />
+            <ScreenPanel screen={screen} running={running === "screen"} topN={topN} filters={filters} elapsedMs={elapsedMs} prevScreenSymbols={prevScreenSymbols} changeHistory={changeHistory} onClearHistory={() => setChangeHistory([])} regime={regime} onAnalyze={(sym) => { setTab("analyze"); runAnalyze(sym); }} rrOverride={rrOverride} setRrOverride={setRrOverride} screenMode={screenMode} screenHistory={screenHistory} historySearchSymbol={historySearchSymbol} setHistorySearchSymbol={setHistorySearchSymbol} sparklineData={sparklineData} watchlist={watchlist} addToWatchlist={addToWatchlist} removeFromWatchlist={removeFromWatchlist} isInWatchlist={isInWatchlist} onAnalyzeWatchlist={(sym) => { setTab("analyze"); runAnalyze(sym); }} telegramConfig={telegramConfig} setTelegramConfig={setTelegramConfig} sendTelegramAlert={sendTelegramAlert} stabilityData={stabilityData} positions={positions} openPosition={openPosition} closePosition={closePosition} partialClosePosition={partialClosePosition} isPositionOpen={isPositionOpen} positionPrices={positionPrices} refreshPositionPrices={refreshPositionPrices} positionPricesLoading={positionPricesLoading} closedTrades={closedTrades} manualOpenPosition={manualOpenPosition} updatePosition={updatePosition} />
           </TabsContent>
 
           {/* ============================== Allocation tab ============================== */}
@@ -2774,7 +2819,7 @@ function StabilityBadge({ stability, smoothedScore }: { stability: string; smoot
 }
 
 /* ---------------------------------------------------------------- ScreenPanel */
-function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert, stabilityData, positions, openPosition, closePosition, isPositionOpen, positionPrices, refreshPositionPrices, positionPricesLoading, closedTrades, manualOpenPosition, updatePosition }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void; stabilityData?: Record<string, any>; positions?: Position[]; openPosition?: (stock: any) => void; closePosition?: (positionId: string, exitPrice: number, reason: string) => void; isPositionOpen?: (symbol: string) => boolean; positionPrices?: Record<string, number>; refreshPositionPrices?: () => void; positionPricesLoading?: boolean; closedTrades?: ClosedTrade[]; manualOpenPosition?: (data: { symbol: string; entryPrice: number; shares: number; stopPrice?: number; target1?: number; target2?: number; setupType?: string }) => void; updatePosition?: (positionId: string, updates: Partial<Position>) => void }) {
+function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymbols, changeHistory, onClearHistory, regime, onAnalyze, rrOverride, setRrOverride, screenMode, screenHistory, historySearchSymbol, setHistorySearchSymbol, sparklineData, watchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, onAnalyzeWatchlist, telegramConfig, setTelegramConfig, sendTelegramAlert, stabilityData, positions, openPosition, closePosition, partialClosePosition, isPositionOpen, positionPrices, refreshPositionPrices, positionPricesLoading, closedTrades, manualOpenPosition, updatePosition }: { screen: ScreenResponse | null; running: boolean; topN: number; filters: { rsiMin: number; mcapMin: number; volMin: number }; elapsedMs?: number; prevScreenSymbols?: string[] | null; changeHistory?: ScreenChange[]; onClearHistory?: () => void; regime?: RegimeState | null; onAnalyze?: (symbol: string) => void; rrOverride?: { t1: number; t2: number } | null; setRrOverride?: (v: { t1: number; t2: number } | null) => void; screenMode?: "momentum" | "bridge"; screenHistory?: any[]; historySearchSymbol?: string; setHistorySearchSymbol?: (v: string) => void; sparklineData?: Record<string, number[]>; watchlist?: any[]; addToWatchlist?: (stock: any) => void; removeFromWatchlist?: (symbol: string) => void; isInWatchlist?: (symbol: string) => boolean; onAnalyzeWatchlist?: (symbol: string) => void; telegramConfig?: { botToken: string; chatId: string; enabled: boolean }; setTelegramConfig?: (v: { botToken: string; chatId: string; enabled: boolean }) => void; sendTelegramAlert?: (message: string) => void; stabilityData?: Record<string, any>; positions?: Position[]; openPosition?: (stock: any) => void; closePosition?: (positionId: string, exitPrice: number, reason: string) => void; partialClosePosition?: (positionId: string, exitPrice: number, sharesToExit: number, reason: string) => void; isPositionOpen?: (symbol: string) => boolean; positionPrices?: Record<string, number>; refreshPositionPrices?: () => void; positionPricesLoading?: boolean; closedTrades?: ClosedTrade[]; manualOpenPosition?: (data: { symbol: string; entryPrice: number; shares: number; stopPrice?: number; target1?: number; target2?: number; setupType?: string }) => void; updatePosition?: (positionId: string, updates: Partial<Position>) => void }) {
   // Column sort state
   const [sortCol, setSortCol] = useState<string>("");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -3250,6 +3295,7 @@ function ScreenPanel({ screen, running, topN, filters, elapsedMs, prevScreenSymb
         onRefreshPrices={refreshPositionPrices}
         refreshing={!!positionPricesLoading}
         onClose={closePosition}
+        onPartialClose={partialClosePosition}
         onManualOpen={manualOpenPosition}
         onUpdate={updatePosition}
       />
@@ -3354,12 +3400,13 @@ function WatchlistCard({ watchlist, onAnalyze, onRemove }: {
 }
 
 /* ---------------------------------------------------------------- PositionsCard */
-function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing, onClose, onManualOpen, onUpdate }: {
+function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing, onClose, onPartialClose, onManualOpen, onUpdate }: {
   positions: Position[];
   positionPrices: Record<string, number>;
   onRefreshPrices?: () => void;
   refreshing?: boolean;
   onClose?: (positionId: string, exitPrice: number, reason: string) => void;
+  onPartialClose?: (positionId: string, exitPrice: number, sharesToExit: number, reason: string) => void;
   onManualOpen?: (data: { symbol: string; entryPrice: number; shares: number; stopPrice?: number; target1?: number; target2?: number; setupType?: string }) => void;
   onUpdate?: (positionId: string, updates: Partial<Position>) => void;
 }) {
@@ -3367,6 +3414,7 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
   const [closingId, setClosingId] = useState<string | null>(null);
   const [exitPriceInput, setExitPriceInput] = useState<string>("");
   const [exitReason, setExitReason] = useState<string>("Manual");
+  const [exitQtyInput, setExitQtyInput] = useState<string>(""); // partial-exit quantity (defaults to full)
 
   // Add Position inline form state
   const [showAddForm, setShowAddForm] = useState(false);
@@ -3442,6 +3490,7 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
     setClosingId(p.id);
     setExitPriceInput(String(livePrice.toFixed(2)));
     setExitReason("Manual");
+    setExitQtyInput(String(p.shares)); // default = full quantity (full close)
     // close any open edit form
     setEditingId(null);
     setEditForm({ shares: "", entryPrice: "", stopPrice: "", target1: "", target2: "" });
@@ -3451,6 +3500,7 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
     setClosingId(null);
     setExitPriceInput("");
     setExitReason("Manual");
+    setExitQtyInput("");
   };
 
   const confirmClose = (p: Position) => {
@@ -3459,7 +3509,21 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
       toast({ title: "Invalid exit price", description: "Enter a valid positive number", variant: "destructive" });
       return;
     }
-    onClose?.(p.id, price, exitReason);
+    const qty = parseInt(exitQtyInput, 10);
+    if (isNaN(qty) || qty <= 0) {
+      toast({ title: "Invalid quantity", description: "Enter a quantity greater than 0", variant: "destructive" });
+      return;
+    }
+    if (qty > p.shares) {
+      toast({ title: "Quantity exceeds holding", description: `You hold ${p.shares} shares of ${p.symbol}`, variant: "destructive" });
+      return;
+    }
+    // Partial exit when qty is less than the full holding; otherwise a normal full close
+    if (qty < p.shares && onPartialClose) {
+      onPartialClose(p.id, price, qty, exitReason);
+    } else {
+      onClose?.(p.id, price, exitReason);
+    }
     cancelClose();
   };
 
@@ -3821,6 +3885,28 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
                                 />
                               </div>
                               <div className="flex flex-col gap-0.5">
+                                <Label className="text-[9px] text-muted-foreground">Exit Qty (of {p.shares})</Label>
+                                <div className="flex items-center gap-1">
+                                  <Input
+                                    type="number"
+                                    step="1"
+                                    min="1"
+                                    max={p.shares}
+                                    value={exitQtyInput}
+                                    onChange={(e) => setExitQtyInput(e.target.value)}
+                                    className="h-7 w-20 text-[11px] tabular-nums"
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") confirmClose(p);
+                                      if (e.key === "Escape") cancelClose();
+                                    }}
+                                  />
+                                  <Button type="button" size="sm" variant="outline" className="h-7 px-1.5 text-[9px] tabular-nums" onClick={() => setExitQtyInput(String(Math.max(1, Math.floor(p.shares * 0.25))))}>25%</Button>
+                                  <Button type="button" size="sm" variant="outline" className="h-7 px-1.5 text-[9px] tabular-nums" onClick={() => setExitQtyInput(String(Math.max(1, Math.floor(p.shares * 0.5))))}>50%</Button>
+                                  <Button type="button" size="sm" variant="outline" className="h-7 px-1.5 text-[9px] tabular-nums" onClick={() => setExitQtyInput(String(Math.max(1, Math.floor(p.shares * 0.75))))}>75%</Button>
+                                  <Button type="button" size="sm" variant="outline" className="h-7 px-1.5 text-[9px] tabular-nums" onClick={() => setExitQtyInput(String(p.shares))}>All</Button>
+                                </div>
+                              </div>
+                              <div className="flex flex-col gap-0.5">
                                 <Label className="text-[9px] text-muted-foreground">Exit Reason</Label>
                                 <Select value={exitReason} onValueChange={setExitReason}>
                                   <SelectTrigger className="h-7 w-32 text-[11px]"><SelectValue /></SelectTrigger>
@@ -3834,15 +3920,21 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
                               </div>
                               {(() => {
                                 const ep = parseFloat(exitPriceInput);
+                                const qty = parseInt(exitQtyInput, 10);
+                                const effQty = (!isNaN(qty) && qty > 0) ? Math.min(qty, p.shares) : p.shares;
+                                const isPartial = effQty < p.shares;
                                 if (!isNaN(ep) && ep > 0) {
-                                  const pR = (ep - p.entryPrice) * p.shares;
+                                  const pR = (ep - p.entryPrice) * effQty;
                                   const pP = ((ep - p.entryPrice) / p.entryPrice) * 100;
                                   return (
                                     <div className="flex flex-col gap-0.5 text-[10px]">
-                                      <span className="text-muted-foreground">Preview P&amp;L</span>
+                                      <span className="text-muted-foreground">{isPartial ? `Preview P&L (${effQty} shares)` : "Preview P&L"}</span>
                                       <span className={`font-semibold tabular-nums ${pR >= 0 ? "text-emerald-600" : "text-red-600"}`}>
                                         {pR >= 0 ? "+" : "−"}₹{Math.abs(Math.round(pR)).toLocaleString("en-IN")} ({pP >= 0 ? "+" : ""}{pP.toFixed(1)}%)
                                       </span>
+                                      {isPartial && (
+                                        <span className="text-[9px] text-muted-foreground">{p.shares - effQty} shares will remain open</span>
+                                      )}
                                     </div>
                                   );
                                 }
@@ -3850,7 +3942,20 @@ function PositionsCard({ positions, positionPrices, onRefreshPrices, refreshing,
                               })()}
                               <div className="flex gap-1 ml-auto">
                                 <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={cancelClose}>Cancel</Button>
-                                <Button size="sm" variant="default" className="h-7 px-2 text-[10px] bg-red-600 hover:bg-red-700 text-white" onClick={() => confirmClose(p)}>Confirm Close</Button>
+                                {(() => {
+                                  const qty = parseInt(exitQtyInput, 10);
+                                  const isPartial = !isNaN(qty) && qty > 0 && qty < p.shares;
+                                  return (
+                                    <Button
+                                      size="sm"
+                                      variant="default"
+                                      className={isPartial ? "h-7 px-2 text-[10px] bg-amber-600 hover:bg-amber-700 text-white" : "h-7 px-2 text-[10px] bg-red-600 hover:bg-red-700 text-white"}
+                                      onClick={() => confirmClose(p)}
+                                    >
+                                      {isPartial ? "🔓 Confirm Partial Exit" : "Confirm Close"}
+                                    </Button>
+                                  );
+                                })()}
                               </div>
                             </div>
                           </TableCell>
