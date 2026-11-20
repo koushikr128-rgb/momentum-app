@@ -458,6 +458,10 @@ export default function Home() {
         rsiMin: String(f.rsiMin),
         mcapMin: String(f.mcapMin),
         volMin: String(f.volMin),
+        // Explicit user clicks (silent=false) bypass the server cache so the
+        // list always reflects fresh data + a current timestamp; background
+        // auto-refresh (silent=true) uses the cache for speed.
+        force: String(!silent),
       });
       const endpoint = mode === "bridge" ? "/api/bridge-screen" : "/api/screen";
       // Bridge screen takes ~70s — use AbortController with 120s timeout

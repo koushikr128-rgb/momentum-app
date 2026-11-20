@@ -42,11 +42,12 @@ export async function GET(req: Request) {
   const volMin = Number(url.searchParams.get("volMin") || "20000");
 
   const cacheKey = `${topN}-${rsiMin}-${mcapMin}-${volMin}`;
+  const force = url.searchParams.get("force") === "true"; // explicit user click → bypass cache
   const cached = cache.get(cacheKey);
   const cacheAge = cached ? Date.now() - cached.ts : Infinity;
 
-  // 1. Fresh cache hit
-  if (cached && cacheAge < CACHE_TTL_MS) {
+  // 1. Fresh cache hit (skipped when force=true — user wants fresh data now)
+  if (cached && cacheAge < CACHE_TTL_MS && !force) {
     return NextResponse.json({
       ...(cached.data as object),
       cached: true, cacheAge,
