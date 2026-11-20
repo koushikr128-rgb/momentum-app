@@ -495,10 +495,10 @@ export default function Home() {
       setScreen(data);
       setAllocDirty(true);
       if (!silent) {
-        if (data.error) {
-          toast({ title: "Screen failed — Yahoo rate-limited", description: data.error.slice(0, 100), variant: "destructive" });
-        } else if (data.refreshing) {
+        if (data.refreshing) {
           toast({ title: "📡 Refreshing in background", description: "Showing cached data — fresh scan runs in the background and appears automatically in ~90s." });
+        } else if (data.error) {
+          toast({ title: "Screen failed — Yahoo rate-limited", description: data.error.slice(0, 100), variant: "destructive" });
         } else if (data.warning) {
           toast({ title: "Showing cached data", description: data.warning.slice(0, 100) });
         } else {

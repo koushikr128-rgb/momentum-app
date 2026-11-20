@@ -122,51 +122,34 @@ export async function GET(req: Request) {
     });
   }
 
-  // 4. No cache AND no published data — last resort: synchronous scan (may be slow).
-  if (IS_SANDBOX) {
-    const localPyResult = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
-    if (localPyResult) {
-      cache.set(cacheKey, { data: localPyResult, ts: Date.now() });
-      lastSuccessful = { data: localPyResult, ts: Date.now() };
-      return NextResponse.json(localPyResult);
-    }
-  }
+  // 4. No cache AND no published data — NEVER do a synchronous 90s scan here
+  //    (it would exceed Next.js maxDuration=60 and fail). Instead: kick off a
+  //    background refresh and return lastSuccessful instantly, or a graceful
+  //    error if we truly have nothing. The frontend polls and picks up fresh
+  //    data once the background scan completes.
+  triggerBackgroundRefresh();
 
-  const csvResult = await tryCsvScreen(topN, rsiMin, mcapMin, volMin, start);
-  if (csvResult) {
-    cache.set(cacheKey, { data: csvResult, ts: Date.now() });
-    lastSuccessful = { data: csvResult, ts: Date.now() };
-    return NextResponse.json(csvResult);
-  }
-
-  const tsResult = await tryTypeScript(topN, rsiMin, mcapMin, volMin, start);
-  if (tsResult) {
-    cache.set(cacheKey, { data: tsResult, ts: Date.now() });
-    lastSuccessful = { data: tsResult, ts: Date.now() };
-    return NextResponse.json(tsResult);
-  }
-
-  // 5. Everything failed, but we may still have a lastSuccessful from a prior key
   if (lastSuccessful) {
     const lsData = lastSuccessful.data as Record<string, unknown>;
     const sliced = (lsData.top10 as unknown[]).slice(0, topN);
     return NextResponse.json({
       ...lsData, top10: sliced, topN,
-      cached: true, stale: true, fallback: true,
+      cached: true, stale: true, fallback: true, refreshing: true,
       cacheAge: Date.now() - lastSuccessful.ts,
       elapsedMs: Date.now() - start,
       filters: { rsiMin, mcapMin, volMin },
-      warning: "All backends failed. Showing fallback data.",
+      warning: "Refreshing in background — latest data will appear shortly.",
     });
   }
 
-  // 6. No data at all
+  // 5. No data at all yet (cold start) — return a graceful, instant response.
+  //    The background refresh is already running; the frontend will retry.
   return NextResponse.json({
-    error: "Yahoo Finance rate-limited and no cache available.",
-    warning: "Please try again in a few minutes.",
+    error: "Warming up — fetching fresh data in the background. Please retry in ~90s.",
+    warning: "First load after server restart. The next Run Screen will return live data.",
     universeSize: 0, passedData: 0, passedTech: 0, passedMc: 0, top10: [],
     runAt: new Date().toISOString(),
-    elapsedMs: Date.now() - start, cached: false,
+    elapsedMs: Date.now() - start, cached: false, refreshing: true,
     topN, filters: { rsiMin, mcapMin, volMin },
   });
 }
