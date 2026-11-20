@@ -41,6 +41,7 @@ type ScreenResponse = {
   stale?: boolean;
   fallback?: boolean;
   cached?: boolean;
+  refreshing?: boolean; // server is running a background scan — poll for fresh data
 };
 
 type ScreenChange = {
@@ -222,6 +223,7 @@ export default function Home() {
   const [heldStocks, setHeldStocks] = useState<HeldStock[]>([]);
   const heldStocksRef = useRef<HeldStock[]>([]);
   const screenRef = useRef<ScreenResponse | null>(null);
+  const bgPollRef = useRef<ReturnType<typeof setTimeout> | null>(null); // in-flight background-refresh poll
   const [alloc, setAlloc] = useState<AllocateResponse | null>(null);
   const [stops, setStops] = useState<StopsResponse | null>(null);
   const [stress, setStress] = useState<StressResponse | null>(null);
@@ -458,10 +460,6 @@ export default function Home() {
         rsiMin: String(f.rsiMin),
         mcapMin: String(f.mcapMin),
         volMin: String(f.volMin),
-        // Explicit user clicks (silent=false) bypass the server cache so the
-        // list always reflects fresh data + a current timestamp; background
-        // auto-refresh (silent=true) uses the cache for speed.
-        force: String(!silent),
       });
       const endpoint = mode === "bridge" ? "/api/bridge-screen" : "/api/screen";
       // Bridge screen takes ~70s — use AbortController with 120s timeout
@@ -499,6 +497,8 @@ export default function Home() {
       if (!silent) {
         if (data.error) {
           toast({ title: "Screen failed — Yahoo rate-limited", description: data.error.slice(0, 100), variant: "destructive" });
+        } else if (data.refreshing) {
+          toast({ title: "📡 Refreshing in background", description: "Showing cached data — fresh scan runs in the background and appears automatically in ~90s." });
         } else if (data.warning) {
           toast({ title: "Showing cached data", description: data.warning.slice(0, 100) });
         } else {
@@ -518,6 +518,18 @@ export default function Home() {
       setRunning(null);
     }
   }, [topN, filters, screenMode]);
+
+  // When the server signals a background refresh is in progress, poll for the
+  // fresh result after ~90s (silent re-fetch). Re-triggers if still refreshing.
+  useEffect(() => {
+    if (!screen?.refreshing) return;
+    if (bgPollRef.current) clearTimeout(bgPollRef.current);
+    bgPollRef.current = setTimeout(() => {
+      bgPollRef.current = null;
+      runScreen(true);
+    }, 90000);
+    return () => { if (bgPollRef.current) { clearTimeout(bgPollRef.current); bgPollRef.current = null; } };
+  }, [screen?.refreshing, runScreen]);
 
   // MANDATORY: Do NOT auto-fetch on mount. Restore from localStorage only.
   // Screen ONLY refreshes when user clicks Run Screen, auto-refresh is ON,

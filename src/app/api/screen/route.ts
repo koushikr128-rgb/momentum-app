@@ -31,7 +31,13 @@ const IS_SANDBOX = !RENDER_URL && process.env.VERCEL !== "1";
 type CacheEntry = { data: unknown; ts: number };
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 30 * 60 * 1000;
+// When cache is older than this, serve it instantly (stale) AND kick off a
+// background refresh — so the user never waits 90s or sees "Screen Failed".
+const STALE_REFRESH_MS = 2 * 60 * 1000;
 let lastSuccessful: CacheEntry | null = null;
+// A single in-flight background refresh promise (prevents overlapping 90s scans)
+let refreshing: Promise<void> | null = null;
+let refreshingKey: string | null = null;
 
 export async function GET(req: Request) {
   const start = Date.now();
@@ -42,21 +48,81 @@ export async function GET(req: Request) {
   const volMin = Number(url.searchParams.get("volMin") || "20000");
 
   const cacheKey = `${topN}-${rsiMin}-${mcapMin}-${volMin}`;
-  const force = url.searchParams.get("force") === "true"; // explicit user click → bypass cache
   const cached = cache.get(cacheKey);
   const cacheAge = cached ? Date.now() - cached.ts : Infinity;
 
-  // 1. Fresh cache hit (skipped when force=true — user wants fresh data now)
-  if (cached && cacheAge < CACHE_TTL_MS && !force) {
+  // Kick off a non-blocking background refresh (90s scan) if one isn't already
+  // running for this key. Updates the cache when it completes; the caller never waits.
+  const triggerBackgroundRefresh = () => {
+    if (refreshing && refreshingKey === cacheKey) return; // already refreshing this key
+    refreshingKey = cacheKey;
+    refreshing = (async () => {
+      const rStart = Date.now();
+      try {
+        let result: any = null;
+        if (IS_SANDBOX) result = await tryLocalPython(topN, rsiMin, mcapMin, volMin, rStart);
+        if (!result) result = await tryPublishedScreen(topN, rStart);
+        if (!result && RENDER_URL) result = await tryRenderBackend(topN, rsiMin, mcapMin, volMin, rStart);
+        if (!result) result = await tryCsvScreen(topN, rsiMin, mcapMin, volMin, rStart);
+        if (!result) result = await tryTypeScript(topN, rsiMin, mcapMin, volMin, rStart);
+        if (result) {
+          cache.set(cacheKey, { data: result, ts: Date.now() });
+          lastSuccessful = { data: result, ts: Date.now() };
+          console.log(`[screen] background refresh done in ${Date.now() - rStart}ms`);
+        } else {
+          console.log(`[screen] background refresh found no data after ${Date.now() - rStart}ms`);
+        }
+      } catch (e) {
+        console.log(`[screen] background refresh error:`, (e as Error).message);
+      } finally {
+        refreshing = null;
+        refreshingKey = null;
+      }
+    })();
+  };
+
+  // 1. Fresh cache hit → return instantly
+  if (cached && cacheAge < CACHE_TTL_MS) {
+    // If approaching staleness, proactively refresh in the background
+    if (cacheAge > STALE_REFRESH_MS) triggerBackgroundRefresh();
     return NextResponse.json({
       ...(cached.data as object),
       cached: true, cacheAge,
+      refreshing: refreshingKey === cacheKey,
       elapsedMs: Date.now() - start,
       topN, filters: { rsiMin, mcapMin, volMin },
     });
   }
 
-  // 1.5. On sandbox: try local Python FIRST (fresh data from 750 stocks)
+  // 2. Stale cache → return it instantly (never fail) + trigger background refresh
+  if (cached) {
+    triggerBackgroundRefresh();
+    return NextResponse.json({
+      ...(cached.data as object),
+      cached: true, stale: true, cacheAge,
+      refreshing: true,
+      elapsedMs: Date.now() - start,
+      topN, filters: { rsiMin, mcapMin, volMin },
+      warning: "Refreshing in background — latest data will appear shortly.",
+    });
+  }
+
+  // 3. No cache at all — try the FAST published fallback first (local file),
+  //    return it instantly + background-refresh with live data.
+  const published = await tryPublishedScreen(topN, start);
+  if (published) {
+    cache.set(cacheKey, { data: published, ts: Date.now() });
+    lastSuccessful = { data: published, ts: Date.now() };
+    triggerBackgroundRefresh();
+    return NextResponse.json({
+      ...published, refreshing: true,
+      elapsedMs: Date.now() - start,
+      topN, filters: { rsiMin, mcapMin, volMin },
+      warning: "Refreshing in background — latest data will appear shortly.",
+    });
+  }
+
+  // 4. No cache AND no published data — last resort: synchronous scan (may be slow).
   if (IS_SANDBOX) {
     const localPyResult = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
     if (localPyResult) {
@@ -66,27 +132,6 @@ export async function GET(req: Request) {
     }
   }
 
-  // 2. Try published screen data (from GitHub — fallback when yfinance missing on sandbox, primary on Vercel)
-  {
-    const publishedResult = await tryPublishedScreen(topN, start);
-    if (publishedResult) {
-      cache.set(cacheKey, { data: publishedResult, ts: Date.now() });
-      lastSuccessful = { data: publishedResult, ts: Date.now() };
-      return NextResponse.json(publishedResult);
-    }
-  }
-
-  // 3. Try Render Python backend (when deployed on Vercel with RENDER_URL)
-  if (RENDER_URL) {
-    const renderResult = await tryRenderBackend(topN, rsiMin, mcapMin, volMin, start);
-    if (renderResult) {
-      cache.set(cacheKey, { data: renderResult, ts: Date.now() });
-      lastSuccessful = { data: renderResult, ts: Date.now() };
-      return NextResponse.json(renderResult);
-    }
-  }
-
-  // 4. Try CSV-backed TypeScript (fallback if Python unavailable)
   const csvResult = await tryCsvScreen(topN, rsiMin, mcapMin, volMin, start);
   if (csvResult) {
     cache.set(cacheKey, { data: csvResult, ts: Date.now() });
@@ -94,7 +139,6 @@ export async function GET(req: Request) {
     return NextResponse.json(csvResult);
   }
 
-  // 5. Try pure TypeScript (works when Yahoo isn't rate-limiting)
   const tsResult = await tryTypeScript(topN, rsiMin, mcapMin, volMin, start);
   if (tsResult) {
     cache.set(cacheKey, { data: tsResult, ts: Date.now() });
@@ -102,16 +146,7 @@ export async function GET(req: Request) {
     return NextResponse.json(tsResult);
   }
 
-  // 5. All failed — fall back to cache
-  if (cached) {
-    return NextResponse.json({
-      ...(cached.data as object),
-      cached: true, stale: true, cacheAge,
-      elapsedMs: Date.now() - start,
-      topN, filters: { rsiMin, mcapMin, volMin },
-      warning: "All backends failed. Showing cached data.",
-    });
-  }
+  // 5. Everything failed, but we may still have a lastSuccessful from a prior key
   if (lastSuccessful) {
     const lsData = lastSuccessful.data as Record<string, unknown>;
     const sliced = (lsData.top10 as unknown[]).slice(0, topN);
