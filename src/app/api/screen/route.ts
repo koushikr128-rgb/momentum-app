@@ -196,46 +196,40 @@ export async function GET(req: Request) {
 
 // Try reading published screen data from GitHub (published by sandbox)
 async function tryPublishedScreen(topN: number, start: number) {
+  const sliceToTopN = (data: any) => ({
+    ...data,
+    top10: (data.top10 || []).slice(0, topN).map((s: any, i: number) => ({ ...s, rank: i + 1 })),
+    elapsedMs: Date.now() - start,
+    cached: true,
+    backend: "published",
+    topN,
+    publishedAt: data.publishedAt,
+    filters: { rsiMin: 0, mcapMin: 0, volMin: 0 },
+  });
+
   try {
-    // Read from local file first (if it exists — baked into Vercel deployment)
+    // 1. Fetch from GitHub raw URL FIRST (runtime — always reflects the latest push,
+    //    so fresh data appears on Vercel without a redeploy). Cache-bust to dodge
+    //    any CDN caching of the raw file.
+    const bust = Date.now().toString(36);
+    const githubRes = await fetch(
+      `https://raw.githubusercontent.com/koushikr128-rgb/momentum-app/main/data/latest_screen.json?t=${bust}`,
+      { cache: "no-store", signal: AbortSignal.timeout(8000) }
+    ).catch(() => null);
+    if (githubRes && githubRes.ok) {
+      const data = await githubRes.json();
+      if (data && data.top10 && data.top10.length > 0) return sliceToTopN(data);
+    }
+
+    // 2. Fallback: local baked file (baked into the Vercel deployment at build time)
     const fs = await import("fs/promises");
     const path = await import("path");
     const filePath = path.join(process.cwd(), "data", "latest_screen.json");
     const fileContent = await fs.readFile(filePath, "utf-8").catch(() => null);
-
-    if (!fileContent) {
-      // Fallback: fetch from GitHub raw URL
-      const githubRes = await fetch(
-        "https://raw.githubusercontent.com/koushikr128-rgb/momentum-app/main/data/latest_screen.json",
-        { cache: "no-store", signal: AbortSignal.timeout(5000) }
-      );
-      if (!githubRes.ok) return null;
-      const data = await githubRes.json();
-      if (!data || !data.top10 || data.top10.length === 0) return null;
-      return {
-        ...data,
-        elapsedMs: Date.now() - start,
-        cached: true,
-        backend: "published",
-        topN,
-        filters: { rsiMin: 0, mcapMin: 0, volMin: 0 },
-      };
-    }
-
+    if (!fileContent) return null;
     const data = JSON.parse(fileContent);
     if (!data || !data.top10 || data.top10.length === 0) return null;
-
-    // Slice to requested topN
-    const sliced = {
-      ...data,
-      top10: data.top10.slice(0, topN).map((s: any, i: number) => ({ ...s, rank: i + 1 })),
-      elapsedMs: Date.now() - start,
-      cached: true,
-      backend: "published",
-      topN,
-      publishedAt: data.publishedAt,
-    };
-    return sliced;
+    return sliceToTopN(data);
   } catch {
     return null;
   }
