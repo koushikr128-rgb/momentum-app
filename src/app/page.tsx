@@ -455,16 +455,19 @@ export default function Home() {
     try {
       const n = topNOverride ?? topN;
       const f = filtersOverride ?? filters;
+      const isExplicit = !silent; // explicit Refresh click → synchronous live scan
       const qs = new URLSearchParams({
         topN: String(n),
         rsiMin: String(f.rsiMin),
         mcapMin: String(f.mcapMin),
         volMin: String(f.volMin),
       });
+      if (isExplicit && mode === "momentum") qs.set("sync", "1"); // wait for fresh data, no stale serve
       const endpoint = mode === "bridge" ? "/api/bridge-screen" : "/api/screen";
-      // Bridge screen takes ~70s — use AbortController with 120s timeout
+      // Synchronous sync scan takes ~105s — give it 170s; auto-refresh (cache) gets 120s
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000);
+      const timeoutMs = isExplicit && mode === "momentum" ? 170000 : 120000;
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       const res = await fetch(`${endpoint}?${qs}`, {
         cache: "no-store",
         signal: controller.signal,
@@ -503,13 +506,16 @@ export default function Home() {
           toast({ title: "Showing cached data", description: data.warning.slice(0, 100) });
         } else {
           const label = mode === "bridge" ? "Bridge screen" : "Screen";
-          toast({ title: `${label} complete`, description: `${data.top10.length} stocks in Top ${n}` });
+          const desc = (data as any).sync
+            ? `✅ Live data — ${data.top10.length} stocks in Top ${n}`
+            : `${data.top10.length} stocks in Top ${n}`;
+          toast({ title: `${label} complete`, description: desc });
         }
       }
       return data;
     } catch (e: any) {
       const msg = e?.name === "AbortError"
-        ? "Screen timed out after 120s — Yahoo may be rate-limiting. Try again."
+        ? "Screen timed out — live scan took too long. Yahoo may be rate-limiting. Try again."
         : e instanceof Error ? e.message : "Unknown";
       toast({ title: "Screen failed", description: msg, variant: "destructive" });
       return null;

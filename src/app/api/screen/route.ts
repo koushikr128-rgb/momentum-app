@@ -17,7 +17,7 @@ import { getNifty750Symbols, getNifty750Map } from "@/lib/nifty750";
 const execFileAsync = promisify(execFile);
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 180; // allow synchronous ~105s scan for ?sync=1 (explicit Refresh)
 
 const PYTHON = "/usr/bin/python3";
 const SCRIPT = "/home/z/my-project/scripts/yfinance_backend.py";
@@ -50,6 +50,46 @@ export async function GET(req: Request) {
   const cacheKey = `${topN}-${rsiMin}-${mcapMin}-${volMin}`;
   const cached = cache.get(cacheKey);
   const cacheAge = cached ? Date.now() - cached.ts : Infinity;
+
+  // SYNC MODE (?sync=1): explicit Refresh button — do a synchronous live scan
+  // and WAIT for fresh data. No background refresh, no stale serve. The user
+  // sees a "Refreshing..." spinner until today's data is ready (~105s).
+  const sync = url.searchParams.get("sync") === "1";
+  if (sync) {
+    let result: any = null;
+    if (IS_SANDBOX) result = await tryLocalPython(topN, rsiMin, mcapMin, volMin, start);
+    if (!result) result = await tryPublishedScreen(topN, start);
+    if (!result && RENDER_URL) result = await tryRenderBackend(topN, rsiMin, mcapMin, volMin, start);
+    if (!result) result = await tryCsvScreen(topN, rsiMin, mcapMin, volMin, start);
+    if (!result) result = await tryTypeScript(topN, rsiMin, mcapMin, volMin, start);
+    if (result) {
+      cache.set(cacheKey, { data: result, ts: Date.now() });
+      lastSuccessful = { data: result, ts: Date.now() };
+      console.log(`[screen] sync scan done in ${Date.now() - start}ms`);
+      return NextResponse.json({
+        ...result, sync: true,
+        elapsedMs: Date.now() - start,
+        topN, filters: { rsiMin, mcapMin, volMin },
+      });
+    }
+    // Sync scan failed all backends — fall back to cache if available (don't hard-fail)
+    if (cached) {
+      return NextResponse.json({
+        ...(cached.data as object),
+        cached: true, stale: true, cacheAge,
+        elapsedMs: Date.now() - start,
+        topN, filters: { rsiMin, mcapMin, volMin },
+        warning: "Live scan failed — showing last cached data.",
+      });
+    }
+    return NextResponse.json({
+      error: "Live scan failed and no cache available. Please retry.",
+      universeSize: 0, passedData: 0, passedTech: 0, passedMc: 0, top10: [],
+      runAt: new Date().toISOString(),
+      elapsedMs: Date.now() - start, cached: false,
+      topN, filters: { rsiMin, mcapMin, volMin },
+    });
+  }
 
   // Kick off a non-blocking background refresh (90s scan) if one isn't already
   // running for this key. Updates the cache when it completes; the caller never waits.
