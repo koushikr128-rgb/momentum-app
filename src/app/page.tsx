@@ -537,9 +537,10 @@ export default function Home() {
     return () => { if (bgPollRef.current) { clearTimeout(bgPollRef.current); bgPollRef.current = null; } };
   }, [screen?.refreshing, runScreen]);
 
-  // MANDATORY: Do NOT auto-fetch on mount. Restore from localStorage only.
-  // Screen ONLY refreshes when user clicks Run Screen, auto-refresh is ON,
-  // or user changes Top N / filters. NEVER add runScreen() here.
+  // On mount: restore last screen from localStorage (shows instantly, no blank
+  // page), THEN auto-fetch fresh data via the silent cache/published path (fast —
+  // NOT a 90s live scan). Without this, the app shows the stale localStorage
+  // snapshot forever and never asks the server for today's data.
   useEffect(() => {
     try {
       const s = localStorage.getItem("nifty_last_screen");
@@ -549,6 +550,8 @@ export default function Home() {
       const c = localStorage.getItem("nifty_change_history");
       if (c) { const pc = JSON.parse(c); if (Array.isArray(pc)) setChangeHistory(pc); }
     } catch {}
+    // Fetch today's data once on mount (silent = cache/published, ~2s, no live scan).
+    runScreen(true);
   }, []);
   useEffect(() => { if (screen?.top10?.length > 0) try { localStorage.setItem("nifty_last_screen", JSON.stringify(screen)); } catch {} }, [screen]);
 
